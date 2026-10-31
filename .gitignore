@@ -1,0 +1,21 @@
+# Cargo output
+/target/
+/build/target/
+/build/binary/
+
+# Packaging output
+/build/appimage/AppDir/
+/build/appimage/*.AppImage
+/build/appimage/tools/
+/build/backups/
+
+# Personal project documents
+/docs
+
+# Editor and OS noise
+*.swp
+*~
+.DS_Store
+
+# Original high-res wordmark kept locally; the README uses logo.webp
+/res/logos/logo.png
