@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+pipeweaver-ipc = { git = "https://github.com/pipeweaver/pipeweaver", tag = "v0.1.9" }
+pipeweaver-shared = { git = "https://github.com/pipeweaver/pipeweaver", tag = "v0.1.9" }
+ulid = "1"
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

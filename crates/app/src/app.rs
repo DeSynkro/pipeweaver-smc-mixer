@@ -5,6 +5,7 @@ use egui::{
     StrokeKind, UiBuilder, Vec2, ViewportCommand, pos2, vec2,
 };
 use pipeweaver_smc_core::config::Config;
+use pipeweaver_smc_core::{Engine, Snapshot, STRIP_COUNT};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -45,7 +46,7 @@ pub struct SmcApp {
     config_path: PathBuf,
     screen: Screen,
     pipeweaver_online: bool,
-    pipeweaver_net: Arc<AtomicBool>,
+    engine: Arc<Engine>,
     mixer_online: bool,
     window_width: f32,
     restore_width: f32,
@@ -65,7 +66,7 @@ impl SmcApp {
         stop: Arc<AtomicBool>,
         ui_on: Arc<AtomicBool>,
         focus: Arc<AtomicBool>,
-        pipeweaver_net: Arc<AtomicBool>,
+        engine: Arc<Engine>,
     ) -> Self {
         let window_width = config.window_width();
         Self {
@@ -76,7 +77,7 @@ impl SmcApp {
             config_path,
             screen: Screen::Mixer,
             pipeweaver_online: false,
-            pipeweaver_net,
+            engine,
             mixer_online: false,
             window_width,
             restore_width: window_width,
@@ -186,6 +187,68 @@ impl SmcApp {
         egui::Image::from_bytes(uri, bytes)
             .fit_to_exact_size(map.size(vec2(theme::SHELL_W, theme::SHELL_H)))
             .paint_at(ui, map.rect);
+    }
+
+    fn paint_channels(&self, ui: &egui::Ui, map: &Map, snapshot: &Snapshot) {
+        let palette = theme::palette(self.config.light_panel);
+        let painter = ui.painter();
+        let text_size = (8.5 * map.scale).max(6.0);
+
+        for (index, channel) in snapshot.channels.iter().enumerate().take(STRIP_COUNT) {
+            if !channel.assigned {
+                continue;
+            }
+
+            let base = 100.5 + 215.0 * index as f32;
+            let colour = if channel.muted {
+                palette.dim
+            } else {
+                Color32::from_rgb(channel.colour.0, channel.colour.1, channel.colour.2)
+            };
+
+            let plate = map.rect(Rect::from_min_size(
+                pos2(base + 10.0, 271.5),
+                vec2(82.0, 20.0),
+            ));
+            painter.rect_filled(
+                Rect::from_min_size(plate.min, vec2(plate.width(), (2.5 * map.scale).max(1.0))),
+                0,
+                colour,
+            );
+            painter.with_clip_rect(plate).text(
+                plate.center(),
+                Align2::CENTER_CENTER,
+                &channel.name,
+                FontId::proportional(text_size),
+                palette.text,
+            );
+
+            let slot_top = 350.0;
+            let slot_height = 451.0;
+            let y = slot_top + (1.0 - channel.fader as f32 / 100.0) * slot_height;
+            let cap = Rect::from_center_size(
+                map.point(base + 51.0, y),
+                map.size(vec2(54.0, 13.0)),
+            );
+            painter.rect_filled(cap, map.radius(3.0), colour);
+            painter.rect_stroke(
+                cap,
+                map.radius(3.0),
+                Stroke::new((1.0 * map.scale).max(1.0), palette.border),
+                StrokeKind::Inside,
+            );
+
+            let angle = (-135.0 + 270.0 * channel.knob as f32 / 100.0).to_radians();
+            let centre = map.point(base + 51.5, 170.0);
+            let direction = vec2(angle.sin(), -angle.cos());
+            painter.line_segment(
+                [
+                    centre + direction * (36.0 * map.scale),
+                    centre + direction * (54.0 * map.scale),
+                ],
+                Stroke::new((3.0 * map.scale).max(1.5), colour),
+            );
+        }
     }
 
     fn paint_bezel(
@@ -623,7 +686,8 @@ impl eframe::App for SmcApp {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         let monitor = monitor_rect(frame);
-        self.pipeweaver_online = self.pipeweaver_net.load(Ordering::Relaxed);
+        let snapshot = self.engine.snapshot();
+        self.pipeweaver_online = snapshot.connected;
 
         // The window is created locked so tiling managers keep it floating.
         // Once it has been mapped, allow programmatic resizing again.
@@ -674,6 +738,7 @@ impl eframe::App for SmcApp {
             .show(ui, |ui| {
                 let map = Map::new(ui.max_rect());
                 self.paint_shell(ui, &map);
+                self.paint_channels(ui, &map, &snapshot);
                 self.paint_bezel(ui, &map, &ctx, monitor);
                 if self.screen == Screen::Config {
                     self.paint_config(ui, &map, &ctx, monitor);

@@ -7,6 +7,7 @@ use anyhow::Result;
 use clap::Parser;
 use eframe::egui;
 use pipeweaver_smc_core::config::{Config, state_dir};
+use pipeweaver_smc_core::Engine;
 use pipeweaver_websocket_client::{BroadcastMessage, spawn_pipeweaver_handler};
 use simplelog::{
     ColorChoice, CombinedLogger, ConfigBuilder, LevelFilter, SharedLogger, TermLogger,
@@ -51,22 +52,23 @@ async fn main() -> Result<()> {
     });
     let tray_handle = tokio::spawn(tray::spawn(stop.clone(), tray_context.clone()));
 
-    let pipeweaver_online = Arc::new(AtomicBool::new(false));
+    let engine = Engine::new();
     {
+        let source_slots = initial.surface_sources;
         let (command_tx, command_rx) = tokio::sync::mpsc::channel(10);
         let (broadcast_tx, mut broadcast_rx) = tokio::sync::broadcast::channel(10);
         let stop_handler = spawn_pipeweaver_handler(command_rx, broadcast_tx).await;
-        let online = pipeweaver_online.clone();
+        let engine = engine.clone();
         tokio::spawn(async move {
             let _command_tx = command_tx;
             let _stop_handler = stop_handler;
             while let Ok(message) = broadcast_rx.recv().await {
                 match message {
-                    BroadcastMessage::Online | BroadcastMessage::Status(_) => {
-                        online.store(true, Ordering::Relaxed);
-                    }
-                    BroadcastMessage::Offline => {
-                        online.store(false, Ordering::Relaxed);
+                    BroadcastMessage::Online => engine.set_connected(true),
+                    BroadcastMessage::Offline => engine.set_connected(false),
+                    BroadcastMessage::Status(status) => {
+                        engine.set_connected(true);
+                        engine.apply(&status, source_slots);
                     }
                 }
             }
@@ -83,7 +85,7 @@ async fn main() -> Result<()> {
             let focus = focus.clone();
             let config_path = config_path.clone();
             let tray_context = tray_context.clone();
-            let pipeweaver_online = pipeweaver_online.clone();
+            let engine = engine.clone();
 
             eframe::run_native(
                 theme::APP_NAME,
@@ -100,7 +102,7 @@ async fn main() -> Result<()> {
                         stop,
                         ui_on,
                         focus,
-                        pipeweaver_online,
+                        engine,
                     )))
                 }),
             )?;

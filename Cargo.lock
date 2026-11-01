@@ -3495,8 +3495,11 @@ name = "pipeweaver-smc-core"
 version = "1.0.0"
 dependencies = [
  "anyhow",
+ "pipeweaver-ipc",
+ "pipeweaver-shared",
  "serde",
  "serde_json",
+ "ulid",
 ]
 
 [[package]]
