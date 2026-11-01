@@ -95,40 +95,61 @@ LIGHT = {
 
 
 def read_transport(source: str) -> list[tuple[str, str]]:
-    """Return (button path, icon path) pairs ordered left to right."""
-    lines = source.splitlines()
-    pairs = []
-    for index in range(3, 25, 2):
-        pairs.append((lines[index], lines[index + 1]))
-
-    def button_x(line: str) -> float:
-        match = re.search(r'd="M([0-9.]+)', line)
-        return float(match.group(1)) if match else 0.0
-
-    pairs.sort(key=lambda pair: button_x(pair[0]))
+    """Return (button, icon) groups ordered left to right from the Figma export."""
+    button_re = re.compile(
+        r'<path transform="matrix\(1 0 0 1 ([0-9.]+) 814\.5\)" '
+        r'd="M0 0L86 0L86 40L0 40Z" fill="#D9D9D9"/>'
+    )
+    icon_re = re.compile(
+        r'<path transform="matrix\(1 0 0 1 ([0-9.]+) ([0-9.]+)\)" '
+        r'd="([^"]*)" fill="#000000"/>'
+    )
+    pairs: list[tuple[str, str]] = []
+    for match in button_re.finditer(source):
+        x = float(match.group(1))
+        icon = icon_re.search(source, match.end())
+        if icon is None:
+            raise SystemExit(f"no icon after transport button at x={x:g}")
+        pairs.append(
+            (
+                f'<g transform="translate({x:g},814.5)">'
+                f'<path d="M0 0L86 0L86 40L0 40Z" fill="#D9D9D9" stroke="black"/></g>',
+                f'<g transform="translate({float(icon.group(1)):g},{float(icon.group(2)):g})">'
+                f'<path d="{icon.group(3)}" fill="black"/></g>',
+            )
+        )
+    pairs.sort(key=lambda pair: float(re.search(r'translate\(([0-9.]+)', pair[0]).group(1)))
+    if len(pairs) != 11:
+        raise SystemExit(f"expected 11 transport buttons, found {len(pairs)}")
     return pairs
 
 
-def read_bt_shift(source: str) -> list[str]:
-    lines = source.splitlines()
-    candidates = [
-        lines[i]
-        for i in range(len(lines) - 1)
-        if 'fill="#D9D9D9" stroke="black"' in lines[i]
-        and "1777.5" in lines[i]
+def read_nav_plates(source: str) -> list[str]:
+    """Return the navigation plates, top first, as positioned groups.
+
+    The first two are wired to Mixer and Config; any extra plate is ignored.
+    """
+    plate_re = re.compile(
+        r'<path transform="matrix\(1 0 0 1 ([0-9.]+) ([0-9.]+)\)" '
+        r'd="(M18\.5 0L112\.5 0[^"]*)" fill="#D9D9D9"/>'
+    )
+    plates = sorted(plate_re.findall(source), key=lambda plate: float(plate[1]))
+    if len(plates) < 2:
+        raise SystemExit(f"expected at least two navigation plates, found {len(plates)}")
+    return [
+        f'<g transform="translate({float(x):g},{float(y):g})">'
+        f'<path d="{d}" fill="#D9D9D9" stroke="black"/></g>'
+        for x, y, d in plates[:2]
     ]
-    if len(candidates) != 2:
-        raise SystemExit(f"expected BT and SHIFT plates, found {len(candidates)}")
-    return candidates
 
 
 def recolour(path: str, palette: dict, fill: str, stroke: str | None = None) -> str:
     path = re.sub(r'fill="#D9D9D9"', f'fill="{fill}"', path)
     if stroke is None:
-        path = re.sub(r'stroke="black"', "", path)
-        path = re.sub(r'fill="black"', f'fill="{palette["icon"]}"', path)
+        path = re.sub(r'stroke="(?:black|#000000)"', "", path)
+        path = re.sub(r'fill="(?:black|#000000)"', f'fill="{palette["icon"]}"', path)
     else:
-        path = re.sub(r'stroke="black"', f'stroke="{stroke}"', path)
+        path = re.sub(r'stroke="(?:black|#000000)"', f'stroke="{stroke}"', path)
     return path
 
 
@@ -197,7 +218,7 @@ def strip_svg(index: int, palette: dict) -> str:
 
 def build(source: str, palette: dict) -> str:
     transport = read_transport(source)
-    nav_plates = read_bt_shift(source)
+    nav_plates = read_nav_plates(source)
 
     parts = [
         '<?xml version="1.0" encoding="UTF-8"?>',

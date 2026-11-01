@@ -624,11 +624,12 @@ impl SmcApp {
             let active = self.screen == screen;
             let on_config = self.screen == Screen::Config;
             let painter = ui.painter();
+            let shape = map.radius(18.5);
             if on_config {
-                painter.rect_filled(rect, map.radius(10.0), palette.card);
+                painter.rect_filled(rect, shape, palette.card);
                 painter.rect_stroke(
                     rect,
-                    map.radius(10.0),
+                    shape,
                     Stroke::new((1.2 * map.scale).max(1.0), palette.border),
                     StrokeKind::Inside,
                 );
@@ -636,14 +637,14 @@ impl SmcApp {
             if response.hovered() && !active {
                 painter.rect_filled(
                     rect.shrink(3.0 * map.scale),
-                    map.radius(10.0),
+                    map.radius(15.5),
                     palette.hover,
                 );
             }
             if active {
                 painter.rect_stroke(
-                    rect.shrink(3.0 * map.scale),
-                    map.radius(10.0),
+                    rect,
+                    shape,
                     Stroke::new((1.5 * map.scale).max(1.0), palette.accent),
                     StrokeKind::Inside,
                 );

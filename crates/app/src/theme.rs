@@ -70,11 +70,11 @@ pub const SHELL_LIGHT_URI: &str = "bytes://pipeweaver-smc-mixer-light.svg";
 pub const ICON_PNG: &[u8] = include_bytes!("../../../res/icons/Icon.png");
 
 pub fn nav_mixer() -> Rect {
-    Rect::from_min_max(pos2(1777.5, 144.5), pos2(1908.5, 196.5))
+    Rect::from_min_max(pos2(1794.0, 111.0), pos2(1925.0, 159.0))
 }
 
 pub fn nav_config() -> Rect {
-    Rect::from_min_max(pos2(1777.5, 255.5), pos2(1908.5, 307.5))
+    Rect::from_min_max(pos2(1794.0, 181.0), pos2(1925.0, 229.0))
 }
 
 pub fn bezel_drag() -> Rect {
