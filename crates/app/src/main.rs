@@ -9,8 +9,8 @@ mod tray;
 use anyhow::Result;
 use clap::Parser;
 use eframe::egui;
-use pipeweaver_smc_core::config::{Config, state_dir};
 use pipeweaver_smc_core::Engine;
+use pipeweaver_smc_core::config::{Config, state_dir};
 use pipeweaver_websocket_client::{BroadcastMessage, spawn_pipeweaver_handler};
 use simplelog::{
     ColorChoice, CombinedLogger, ConfigBuilder, LevelFilter, SharedLogger, TermLogger,
@@ -60,9 +60,10 @@ async fn main() -> Result<()> {
     let midi_link = Arc::new(AtomicU8::new(midi::Link::Offline.code()));
     {
         let link = midi_link.clone();
-        let config = initial.clone();
+        let config_path = config_path.clone();
         tokio::spawn(async move {
             loop {
+                let config = Config::load(&config_path);
                 let detected = midi::detect(&config);
                 log::debug!("MIDI link: {:?}", detected);
                 link.store(detected.code(), Ordering::Relaxed);

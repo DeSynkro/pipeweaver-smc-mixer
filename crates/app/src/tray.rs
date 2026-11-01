@@ -101,12 +101,10 @@ impl Tray for TrayIcon {
 
     fn icon_pixmap(&self) -> Vec<Icon> {
         static ICON: LazyLock<Icon> = LazyLock::new(|| {
-            let image = image::load_from_memory_with_format(
-                theme::ICON_PNG,
-                image::ImageFormat::Png,
-            )
-            .expect("load tray icon")
-            .resize_exact(128, 128, image::imageops::FilterType::Lanczos3);
+            let image =
+                image::load_from_memory_with_format(theme::ICON_PNG, image::ImageFormat::Png)
+                    .expect("load tray icon")
+                    .resize_exact(128, 128, image::imageops::FilterType::Lanczos3);
             let (width, height) = image.dimensions();
             let mut data = image.into_rgba8().into_vec();
             for pixel in data.chunks_exact_mut(4) {

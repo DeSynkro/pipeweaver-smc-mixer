@@ -1,15 +1,15 @@
+use crate::media::MediaCommand;
+use egui::ViewportCommand;
 use midir::{
     MidiInput, MidiInputConnection, MidiInputPort, MidiOutput, MidiOutputConnection, MidiOutputPort,
 };
 use pipeweaver_ipc::commands::{APICommand, DaemonRequest};
 use pipeweaver_shared::{Mix, MuteState, MuteTarget};
-use crate::media::MediaCommand;
 use pipeweaver_smc_core::config::{Config, MidiMode};
 use pipeweaver_smc_core::engine::{ChannelKind, Engine, Snapshot};
-use egui::ViewportCommand;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc::{Sender, UnboundedSender};
 use ulid::Ulid;
 
@@ -170,104 +170,121 @@ pub fn run_controls(
     minimized: Arc<AtomicBool>,
     egui: Arc<Mutex<Option<egui::Context>>>,
 ) {
-    let callback_engine = engine.clone();
-    let callback_commands = commands.clone();
-    let callback_swap = swap.clone();
-    let callback_pickup = pickup.clone();
-    let callback_media = media.clone();
-    let callback_ui_on = ui_on.clone();
-    let callback_focus = focus.clone();
-    let callback_record_hex = record_hex.clone();
-    let callback_minimized = minimized.clone();
-    let callback_egui = egui.clone();
-    let mut pickup_state = PickupState::default();
-    let mut pickup_was = false;
-    let mut pressed = [false; 128];
-    let mut hex_active = false;
+    let config_path = Config::path();
+    let mut config = config;
 
-    let callback = move |message: &[u8]| {
-        if message.len() < 3 || message[0] & 0xF0 != 0xB0 {
-            return;
-        }
-        let control = message[1];
-        let value = message[2];
-        let pickup_enabled = callback_pickup.load(Ordering::Relaxed);
-        if pickup_enabled && !pickup_was {
-            pickup_state.reset_all();
-        }
-        pickup_was = pickup_enabled;
+    loop {
+        let callback_engine = engine.clone();
+        let callback_commands = commands.clone();
+        let callback_swap = swap.clone();
+        let callback_pickup = pickup.clone();
+        let callback_media = media.clone();
+        let callback_ui_on = ui_on.clone();
+        let callback_focus = focus.clone();
+        let callback_record_hex = record_hex.clone();
+        let callback_minimized = minimized.clone();
+        let callback_egui = egui.clone();
+        let mut pickup_state = PickupState::default();
+        let mut pickup_was = false;
+        let mut pressed = [false; 128];
+        let mut hex_active = false;
 
-        match control {
-            30..=47 => handle_axis(
-                control,
-                value,
-                &callback_engine,
-                &callback_commands,
-                &callback_swap,
-                &mut pickup_state,
-                pickup_enabled,
-            ),
-            52..=62 => {
-                let down = value > 64;
-                if pressed[control as usize] == down {
-                    return;
-                }
-                pressed[control as usize] = down;
-                handle_transport(
-                    control,
-                    down,
-                    &callback_media,
-                    &callback_engine,
-                    &callback_ui_on,
-                    &callback_focus,
-                    &callback_record_hex,
-                    &mut hex_active,
-                    &callback_minimized,
-                    &callback_egui,
-                );
+        let callback = move |message: &[u8]| {
+            if message.len() < 3 || message[0] & 0xF0 != 0xB0 {
+                return;
             }
-            64..=95 => {
-                let down = value > 64;
-                if pressed[control as usize] == down {
-                    return;
-                }
-                pressed[control as usize] = down;
-                if down {
-                    handle_button(
+            let control = message[1];
+            let value = message[2];
+            let pickup_enabled = callback_pickup.load(Ordering::Relaxed);
+            if pickup_enabled && !pickup_was {
+                pickup_state.reset_all();
+            }
+            pickup_was = pickup_enabled;
+
+            match control {
+                30..=47 => handle_axis(
+                    control,
+                    value,
+                    &callback_engine,
+                    &callback_commands,
+                    &callback_swap,
+                    &mut pickup_state,
+                    pickup_enabled,
+                ),
+                52..=62 => {
+                    let down = value > 64;
+                    if pressed[control as usize] == down {
+                        return;
+                    }
+                    pressed[control as usize] = down;
+                    handle_transport(
                         control,
+                        down,
+                        &callback_media,
                         &callback_engine,
-                        &callback_commands,
-                        &callback_swap,
-                        &mut pickup_state,
+                        &callback_ui_on,
+                        &callback_focus,
+                        &callback_record_hex,
+                        &mut hex_active,
+                        &callback_minimized,
+                        &callback_egui,
                     );
                 }
+                64..=95 => {
+                    let down = value > 64;
+                    if pressed[control as usize] == down {
+                        return;
+                    }
+                    pressed[control as usize] = down;
+                    if down {
+                        handle_button(
+                            control,
+                            &callback_engine,
+                            &callback_commands,
+                            &callback_swap,
+                            &mut pickup_state,
+                        );
+                    }
+                }
+                _ => {}
             }
-            _ => {}
-        }
-    };
+        };
 
-    let port = match open_control(&config, callback) {
-        Some(port) => port,
-        None => {
-            log::warn!("MIDI control: SMC-Mixer port not available");
-            return;
-        }
-    };
+        let port = match open_control(&config, callback) {
+            Some(port) => port,
+            None => {
+                log::warn!("MIDI control: SMC-Mixer port not available");
+                std::thread::sleep(Duration::from_secs(1));
+                config = Config::load(&config_path);
+                continue;
+            }
+        };
 
-    let mut output = open_output(&config);
-    match &output {
-        Some(_) => log::info!("MIDI output connected"),
-        None => log::warn!("MIDI output: SMC-Mixer port not available"),
-    }
-    log::info!("MIDI control connected: {} ({:?})", port.name, port.link);
-
-    let mut leds = [u8::MAX; 32];
-    loop {
-        if let Some(output) = output.as_mut() {
-            let snapshot = engine.snapshot();
-            send_leds(output, &snapshot, &swap, &mut leds);
+        let mut output = open_output(&config);
+        match &output {
+            Some(_) => log::info!("MIDI output connected"),
+            None => log::warn!("MIDI output: SMC-Mixer port not available"),
         }
-        std::thread::sleep(Duration::from_millis(50));
+        log::info!("MIDI control connected: {} ({:?})", port.name, port.link);
+
+        let mut leds = [u8::MAX; 32];
+        let mut last_check = Instant::now();
+        loop {
+            if let Some(output) = output.as_mut() {
+                let snapshot = engine.snapshot();
+                send_leds(output, &snapshot, &swap, &mut leds);
+            }
+            std::thread::sleep(Duration::from_millis(50));
+            if last_check.elapsed() >= Duration::from_secs(1) {
+                last_check = Instant::now();
+                let latest = Config::load(&config_path);
+                if latest.midi_mode != config.midi_mode || latest.midi_device != config.midi_device
+                {
+                    config = latest;
+                    break;
+                }
+            }
+        }
     }
 }
 

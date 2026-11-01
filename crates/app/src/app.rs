@@ -1,25 +1,25 @@
+use crate::media::MediaCommand;
+use crate::midi::Link;
 use crate::theme::{self, Map};
 use eframe::egui;
 use egui::{
     Align, Align2, Color32, Context, FontId, Id, Layout, Rect, RichText, Sense, Shape, Stroke,
     StrokeKind, UiBuilder, Vec2, ViewportCommand, pos2, vec2,
 };
-use pipeweaver_smc_core::config::{autostart_path, set_autostart, Config};
 use pipeweaver_ipc::commands::{APICommand, DaemonRequest};
 use pipeweaver_shared::{Mix, MuteState, MuteTarget};
+use pipeweaver_smc_core::config::{Config, MidiMode, autostart_path, set_autostart};
 use pipeweaver_smc_core::{
-    Channel, ChannelKind, Engine, Snapshot, STRIP_COUNT, SURFACE_SOURCES_DEFAULT,
-    SURFACE_SOURCES_MAX, SURFACE_SOURCES_MIN,
+    Channel, ChannelKind, Engine, STRIP_COUNT, SURFACE_SOURCES_DEFAULT, SURFACE_SOURCES_MAX,
+    SURFACE_SOURCES_MIN, Snapshot,
 };
-use tokio::sync::mpsc::Sender;
-use ulid::Ulid;
-use crate::media::MediaCommand;
-use crate::midi::Link;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::time::{Duration, Instant};
+use tokio::sync::mpsc::Sender;
+use ulid::Ulid;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Screen {
@@ -211,7 +211,9 @@ impl SmcApp {
         }
 
         self.restore_width = self.window_width;
-        self.restore_pos = ctx.input(|input| input.viewport().outer_rect).map(|rect| rect.min);
+        self.restore_pos = ctx
+            .input(|input| input.viewport().outer_rect)
+            .map(|rect| rect.min);
         self.maximized = true;
 
         if !can_position || monitor.is_none() {
@@ -253,11 +255,7 @@ impl SmcApp {
         let interactive = self.screen == Screen::Mixer && self.drawer_t <= 0.01;
         let channel_colours = self.config.channel_colours;
         let mix_colour = |is_b: bool| {
-            if is_b {
-                palette.amber
-            } else {
-                palette.accent
-            }
+            if is_b { palette.amber } else { palette.accent }
         };
 
         for (index, channel) in snapshot.channels.iter().enumerate().take(STRIP_COUNT) {
@@ -308,16 +306,8 @@ impl SmcApp {
             } else {
                 false
             };
-            let fader_colour = if fader_muted {
-                palette.red
-            } else {
-                fader_base
-            };
-            let knob_colour = if knob_muted {
-                palette.red
-            } else {
-                knob_base
-            };
+            let fader_colour = if fader_muted { palette.red } else { fader_base };
+            let knob_colour = if knob_muted { palette.red } else { knob_base };
             let knob_disabled = !is_source;
             let labels = &self.config.mix_labels;
             let mut knob_hovered = false;
@@ -340,12 +330,12 @@ impl SmcApp {
                     }
                     if response.dragged() {
                         if let (Some((start_value, start_y, last)), Some(pos)) = (
-                            ui.ctx().data(|data| data.get_temp::<(u8, f32, u8)>(knob_id)),
+                            ui.ctx()
+                                .data(|data| data.get_temp::<(u8, f32, u8)>(knob_id)),
                             response.interact_pointer_pos(),
                         ) {
                             let delta = (start_y - pos.y) / (150.0 * scale) * 100.0;
-                            let next =
-                                (start_value as f32 + delta).clamp(0.0, 100.0).round() as u8;
+                            let next = (start_value as f32 + delta).clamp(0.0, 100.0).round() as u8;
                             if next != last {
                                 ui.ctx().data_mut(|data| {
                                     data.insert_temp(knob_id, (start_value, start_y, next))
@@ -428,7 +418,10 @@ impl SmcApp {
             );
             painter.rect_filled(
                 Rect::from_min_size(
-                    pos2(plate.center().x - name_width * 0.5 - 4.0 * scale, plate.bottom() - 3.0 * scale),
+                    pos2(
+                        plate.center().x - name_width * 0.5 - 4.0 * scale,
+                        plate.bottom() - 3.0 * scale,
+                    ),
                     vec2(name_width + 8.0 * scale, (2.5 * scale).max(1.5)),
                 ),
                 0,
@@ -447,12 +440,12 @@ impl SmcApp {
             } else {
                 let arc_radius = 52.0 * scale;
                 let start_angle = -135.0f32.to_radians();
-                let end_angle =
-                    start_angle + 270.0f32.to_radians() * (knob as f32 / 100.0);
+                let end_angle = start_angle + 270.0f32.to_radians() * (knob as f32 / 100.0);
                 let steps = 48;
                 let mut points = Vec::with_capacity(steps + 1);
                 for step in 0..=steps {
-                    let angle = start_angle + (end_angle - start_angle) * step as f32 / steps as f32;
+                    let angle =
+                        start_angle + (end_angle - start_angle) * step as f32 / steps as f32;
                     points.push(centre + vec2(angle.sin(), -angle.cos()) * arc_radius);
                 }
                 if knob > 0 {
@@ -478,10 +471,9 @@ impl SmcApp {
                     cap_radius,
                     Stroke::new((1.5 * scale).max(1.0), cap_border),
                 );
-                let pointer_angle = -135.0f32.to_radians()
-                    + 270.0f32.to_radians() * (knob as f32 / 100.0);
-                let tip = centre
-                    + vec2(pointer_angle.sin(), -pointer_angle.cos()) * (36.0 * scale);
+                let pointer_angle =
+                    -135.0f32.to_radians() + 270.0f32.to_radians() * (knob as f32 / 100.0);
+                let tip = centre + vec2(pointer_angle.sin(), -pointer_angle.cos()) * (36.0 * scale);
                 painter.line_segment(
                     [centre, tip],
                     Stroke::new((3.0 * scale).max(1.5), knob_colour),
@@ -526,7 +518,8 @@ impl SmcApp {
             let thumb_centre = map.point(slot_x + 7.5, fill_top);
             let thumb = Rect::from_center_size(thumb_centre, map.size(vec2(74.0, 32.0)));
             let fader_hovered = interactive
-                && ui.ctx()
+                && ui
+                    .ctx()
                     .pointer_hover_pos()
                     .is_some_and(|pos| thumb.contains(pos));
             let thumb_fill = if fader_hovered {
@@ -679,29 +672,17 @@ impl SmcApp {
                         match slot {
                             0 => {
                                 let command = if channel.mute_a {
-                                    APICommand::DelSourceMuteTarget(
-                                        channel.id,
-                                        MuteTarget::TargetA,
-                                    )
+                                    APICommand::DelSourceMuteTarget(channel.id, MuteTarget::TargetA)
                                 } else {
-                                    APICommand::AddSourceMuteTarget(
-                                        channel.id,
-                                        MuteTarget::TargetA,
-                                    )
+                                    APICommand::AddSourceMuteTarget(channel.id, MuteTarget::TargetA)
                                 };
                                 Some(DaemonRequest::Pipewire(command))
                             }
                             1 => {
                                 let command = if channel.mute_b {
-                                    APICommand::DelSourceMuteTarget(
-                                        channel.id,
-                                        MuteTarget::TargetB,
-                                    )
+                                    APICommand::DelSourceMuteTarget(channel.id, MuteTarget::TargetB)
                                 } else {
-                                    APICommand::AddSourceMuteTarget(
-                                        channel.id,
-                                        MuteTarget::TargetB,
-                                    )
+                                    APICommand::AddSourceMuteTarget(channel.id, MuteTarget::TargetB)
                                 };
                                 Some(DaemonRequest::Pipewire(command))
                             }
@@ -709,9 +690,10 @@ impl SmcApp {
                                 self.swap.fetch_xor(1 << index, Ordering::Relaxed);
                                 None
                             }
-                            _ => Some(DaemonRequest::Pipewire(
-                                APICommand::SetSourceVolumeLinked(channel.id, !channel.linked),
-                            )),
+                            _ => Some(DaemonRequest::Pipewire(APICommand::SetSourceVolumeLinked(
+                                channel.id,
+                                !channel.linked,
+                            ))),
                         }
                     } else {
                         match slot {
@@ -721,9 +703,9 @@ impl SmcApp {
                                 } else {
                                     MuteState::Muted
                                 };
-                                Some(DaemonRequest::Pipewire(
-                                    APICommand::SetTargetMuteState(channel.id, state),
-                                ))
+                                Some(DaemonRequest::Pipewire(APICommand::SetTargetMuteState(
+                                    channel.id, state,
+                                )))
                             }
                             1 if channel.mix_b => Some(DaemonRequest::Pipewire(
                                 APICommand::SetTargetMix(channel.id, Mix::A),
@@ -789,11 +771,8 @@ impl SmcApp {
                 && !self.record_hex.load(Ordering::Relaxed)
                 && self.mic_muted.load(Ordering::Relaxed)
             {
-                ui.painter().rect_filled(
-                    rect,
-                    map.radius(9.0),
-                    palette.red.gamma_multiply(0.22),
-                );
+                ui.painter()
+                    .rect_filled(rect, map.radius(9.0), palette.red.gamma_multiply(0.22));
                 ui.painter().rect_stroke(
                     rect,
                     map.radius(9.0),
@@ -898,19 +877,9 @@ impl SmcApp {
         }
     }
 
-    fn paint_bezel(
-        &mut self,
-        ui: &mut egui::Ui,
-        map: &Map,
-        ctx: &Context,
-        monitor: Option<Rect>,
-    ) {
+    fn paint_bezel(&mut self, ui: &mut egui::Ui, map: &Map, ctx: &Context, monitor: Option<Rect>) {
         let drag = map.rect(theme::bezel_drag());
-        let response = ui.interact(
-            drag,
-            Id::unique(("bezel-drag",)),
-            Sense::click_and_drag(),
-        );
+        let response = ui.interact(drag, Id::unique(("bezel-drag",)), Sense::click_and_drag());
         if response.drag_started() {
             ctx.send_viewport_cmd(ViewportCommand::StartDrag);
         }
@@ -1002,11 +971,7 @@ impl SmcApp {
 
         for (index, tooltip) in ["Minimize", "Maximize", "Close"].iter().enumerate() {
             let rect = map.rect(theme::window_control_rect(index));
-            let response = ui.interact(
-                rect,
-                Id::unique(("window-control", index)),
-                Sense::click(),
-            );
+            let response = ui.interact(rect, Id::unique(("window-control", index)), Sense::click());
             let hovered = response.hovered();
             let clicked = response.clicked();
             response.on_hover_text(*tooltip);
@@ -1120,11 +1085,7 @@ impl SmcApp {
                 Align2::CENTER_CENTER,
                 label,
                 FontId::proportional((15.0 * map.scale).max(8.0)),
-                if active {
-                    palette.accent
-                } else {
-                    palette.text
-                },
+                if active { palette.accent } else { palette.text },
             );
             if response.clicked() {
                 self.screen = screen;
@@ -1132,13 +1093,7 @@ impl SmcApp {
         }
     }
 
-    fn paint_config(
-        &mut self,
-        ui: &mut egui::Ui,
-        map: &Map,
-        ctx: &Context,
-        monitor: Option<Rect>,
-    ) {
+    fn paint_config(&mut self, ui: &mut egui::Ui, map: &Map, ctx: &Context, monitor: Option<Rect>) {
         ctx.request_repaint_after(Duration::from_millis(16));
         let palette = theme::palette(self.config.light_panel);
         let panel = map.rect(theme::config_panel());
@@ -1274,6 +1229,62 @@ impl SmcApp {
                             .color(palette.dim),
                     );
 
+                    columns[1].label(
+                        RichText::new("Connection")
+                            .size(section)
+                            .strong()
+                            .color(palette.text),
+                    );
+                    columns[1].label(
+                        RichText::new("MIDI connection")
+                            .size(label)
+                            .color(palette.dim),
+                    );
+                    let mut midi_mode = self.config.midi_mode;
+                    egui::ComboBox::from_id_salt("midi-mode")
+                        .selected_text(match midi_mode {
+                            MidiMode::Auto => "Auto",
+                            MidiMode::Wired => "Wired",
+                            MidiMode::Bluetooth => "Bluetooth",
+                        })
+                        .show_ui(&mut columns[1], |ui| {
+                            ui.selectable_value(
+                                &mut midi_mode,
+                                MidiMode::Auto,
+                                "Auto (wired first)",
+                            );
+                            ui.selectable_value(&mut midi_mode, MidiMode::Wired, "Wired");
+                            ui.selectable_value(
+                                &mut midi_mode,
+                                MidiMode::Bluetooth,
+                                "Bluetooth",
+                            );
+                        });
+                    columns[1].label(
+                        RichText::new(format!(
+                            "MIDI port: {}",
+                            if self.config.midi_device.is_empty() {
+                                "Auto"
+                            } else {
+                                self.config.midi_device.as_str()
+                            }
+                        ))
+                        .size(label)
+                        .color(palette.dim),
+                    );
+                    columns[1].label(
+                        RichText::new(
+                            "Auto prefers wired and falls back to Bluetooth; switching reconnects automatically.",
+                        )
+                        .size(label)
+                        .color(palette.dim),
+                    );
+                    if midi_mode != self.config.midi_mode {
+                        self.config.midi_mode = midi_mode;
+                        self.save_config();
+                    }
+
+                    columns[1].add_space(12.0);
                     columns[1].label(
                         RichText::new("Features")
                             .size(section)
@@ -1617,7 +1628,9 @@ impl SmcApp {
             let engine = &self.engine;
             let reversed = &mut self.reversed;
             ui.scope_builder(
-                UiBuilder::new().max_rect(inner).layout(Layout::top_down(Align::LEFT)),
+                UiBuilder::new()
+                    .max_rect(inner)
+                    .layout(Layout::top_down(Align::LEFT)),
                 |ui| {
                     ui.set_clip_rect(inner);
                     ui.spacing_mut().item_spacing = vec2(gap, 6.0);
@@ -1656,13 +1669,7 @@ impl SmcApp {
         );
     }
 
-    fn paint_grip(
-        &mut self,
-        ui: &mut egui::Ui,
-        map: &Map,
-        ctx: &Context,
-        monitor: Option<Rect>,
-    ) {
+    fn paint_grip(&mut self, ui: &mut egui::Ui, map: &Map, ctx: &Context, monitor: Option<Rect>) {
         let rect = map.rect(theme::resize_grip());
         let response = ui.interact(rect, Id::unique(("resize-grip",)), Sense::drag());
         if response.hovered() {
@@ -1848,7 +1855,10 @@ fn draw_card(
         palette.dim,
     );
     painter.rect_filled(
-        Rect::from_min_size(pos2(rect.left(), rect.top() + 44.0), vec2(rect.width(), 3.0)),
+        Rect::from_min_size(
+            pos2(rect.left(), rect.top() + 44.0),
+            vec2(rect.width(), 3.0),
+        ),
         0,
         colour,
     );
@@ -1893,8 +1903,10 @@ fn draw_card(
             Mix::B,
         );
 
-        let link = Rect::from_center_size(pos2(rect.center().x, rect.top() + 150.0), vec2(20.0, 18.0));
-        let reverse = Rect::from_center_size(pos2(rect.center().x, rect.top() + 178.0), vec2(20.0, 18.0));
+        let link =
+            Rect::from_center_size(pos2(rect.center().x, rect.top() + 150.0), vec2(20.0, 18.0));
+        let reverse =
+            Rect::from_center_size(pos2(rect.center().x, rect.top() + 178.0), vec2(20.0, 18.0));
         if link_button(
             ui,
             &painter,
@@ -1903,9 +1915,10 @@ fn draw_card(
             palette,
             Id::unique(("card-link", channel.id)),
         ) {
-            let _ = commands.try_send(DaemonRequest::Pipewire(
-                APICommand::SetSourceVolumeLinked(channel.id, !channel.linked),
-            ));
+            let _ = commands.try_send(DaemonRequest::Pipewire(APICommand::SetSourceVolumeLinked(
+                channel.id,
+                !channel.linked,
+            )));
         }
         let is_reversed = reversed.contains(&channel.id);
         if card_button(
@@ -1923,12 +1936,16 @@ fn draw_card(
             } else {
                 reversed.insert(channel.id);
             }
-            let _ = commands.try_send(DaemonRequest::Pipewire(
-                APICommand::SetSourceVolume(channel.id, Mix::A, channel.knob),
-            ));
-            let _ = commands.try_send(DaemonRequest::Pipewire(
-                APICommand::SetSourceVolume(channel.id, Mix::B, channel.fader),
-            ));
+            let _ = commands.try_send(DaemonRequest::Pipewire(APICommand::SetSourceVolume(
+                channel.id,
+                Mix::A,
+                channel.knob,
+            )));
+            let _ = commands.try_send(DaemonRequest::Pipewire(APICommand::SetSourceVolume(
+                channel.id,
+                Mix::B,
+                channel.fader,
+            )));
         }
 
         let y = rect.top() + 300.0;
@@ -1985,7 +2002,11 @@ fn draw_card(
             rect,
             0,
             channel.fader,
-            if channel.mix_b { "Audience" } else { "Personal" },
+            if channel.mix_b {
+                "Audience"
+            } else {
+                "Personal"
+            },
             mix_colour,
             true,
             Mix::A,
@@ -2010,9 +2031,9 @@ fn draw_card(
             } else {
                 MuteState::Muted
             };
-            let _ = commands.try_send(DaemonRequest::Pipewire(
-                APICommand::SetTargetMuteState(channel.id, state),
-            ));
+            let _ = commands.try_send(DaemonRequest::Pipewire(APICommand::SetTargetMuteState(
+                channel.id, state,
+            )));
         }
         if card_button(
             ui,
@@ -2024,9 +2045,10 @@ fn draw_card(
             palette,
             Id::unique(("card-mix-a", channel.id)),
         ) {
-            let _ = commands.try_send(DaemonRequest::Pipewire(
-                APICommand::SetTargetMix(channel.id, Mix::A),
-            ));
+            let _ = commands.try_send(DaemonRequest::Pipewire(APICommand::SetTargetMix(
+                channel.id,
+                Mix::A,
+            )));
         }
         if card_button(
             ui,
@@ -2038,9 +2060,10 @@ fn draw_card(
             palette,
             Id::unique(("card-mix-b", channel.id)),
         ) {
-            let _ = commands.try_send(DaemonRequest::Pipewire(
-                APICommand::SetTargetMix(channel.id, Mix::B),
-            ));
+            let _ = commands.try_send(DaemonRequest::Pipewire(APICommand::SetTargetMix(
+                channel.id,
+                Mix::B,
+            )));
         }
     }
 
@@ -2086,10 +2109,7 @@ fn draw_card_slider(
     let bottom = card.top() + 262.0;
     let mut value = value;
 
-    let hit = Rect::from_center_size(
-        pos2(cx, (top + bottom) * 0.5),
-        vec2(44.0, bottom - top),
-    );
+    let hit = Rect::from_center_size(pos2(cx, (top + bottom) * 0.5), vec2(44.0, bottom - top));
     let response = ui.interact(
         hit,
         Id::unique(("off-slider", channel.id, column)),
@@ -2105,11 +2125,7 @@ fn draw_card_slider(
                 let request = if target {
                     DaemonRequest::Pipewire(APICommand::SetTargetVolume(channel.id, next))
                 } else {
-                    DaemonRequest::Pipewire(APICommand::SetSourceVolume(
-                        channel.id,
-                        mix,
-                        next,
-                    ))
+                    DaemonRequest::Pipewire(APICommand::SetSourceVolume(channel.id, mix, next))
                 };
                 let _ = commands.try_send(request);
             }
@@ -2185,7 +2201,14 @@ fn card_button(
     painter.rect_stroke(
         rect,
         egui::CornerRadius::same(5),
-        Stroke::new(1.0, if active { active_colour } else { palette.border }),
+        Stroke::new(
+            1.0,
+            if active {
+                active_colour
+            } else {
+                palette.border
+            },
+        ),
         StrokeKind::Inside,
     );
     painter.text(
@@ -2217,7 +2240,14 @@ fn link_button(
     painter.rect_stroke(
         rect,
         egui::CornerRadius::same(5),
-        Stroke::new(1.0, if active { palette.green } else { palette.border }),
+        Stroke::new(
+            1.0,
+            if active {
+                palette.green
+            } else {
+                palette.border
+            },
+        ),
         StrokeKind::Inside,
     );
     let centre = rect.center();
