@@ -573,6 +573,167 @@ impl SmcApp {
                 value_font,
                 palette.text,
             );
+
+            let slots = if is_source { 4 } else { 3 };
+            for slot in 0..slots {
+                let well = map.rect(Rect::from_min_size(
+                    pos2(base + 128.0, 364.5 + 116.0 * slot as f32),
+                    vec2(61.0, 61.0),
+                ));
+                let rect = well.shrink(4.0 * scale);
+                let id = Id::unique(("surface-button", index, slot));
+                let sense = if interactive {
+                    Sense::click()
+                } else {
+                    Sense::hover()
+                };
+                let response = ui.interact(well, id, sense);
+                let (label, colour, active, tooltip) = if is_source {
+                    match slot {
+                        0 => (
+                            "M",
+                            palette.red,
+                            channel.mute_a,
+                            format!("Mute the {} mix for this strip", labels[0]),
+                        ),
+                        1 => (
+                            "S",
+                            palette.red,
+                            channel.mute_b,
+                            format!("Mute the {} mix for this strip", labels[1]),
+                        ),
+                        2 => (
+                            "R",
+                            palette.red,
+                            is_swapped,
+                            String::from("Swap this strip: the fader and knob trade mixes"),
+                        ),
+                        _ => (
+                            "■",
+                            palette.text,
+                            !channel.linked,
+                            String::from(
+                                "Link both mixes for this strip; lit = unlinked (knob active)",
+                            ),
+                        ),
+                    }
+                } else {
+                    match slot {
+                        0 => (
+                            "M",
+                            palette.red,
+                            channel.mute_a,
+                            String::from("Mute this target"),
+                        ),
+                        1 => (
+                            "A",
+                            palette.accent,
+                            !channel.mix_b,
+                            format!("Route this target to {}; the fader turns blue", labels[0]),
+                        ),
+                        _ => (
+                            "B",
+                            palette.amber,
+                            channel.mix_b,
+                            format!("Route this target to {}; the fader turns amber", labels[1]),
+                        ),
+                    }
+                };
+                let response = response.on_hover_text(tooltip);
+                let fill = if active {
+                    colour
+                } else if response.hovered() {
+                    palette.card_hover
+                } else {
+                    palette.card
+                };
+                painter.rect_filled(rect, map.radius(7.0), fill);
+                painter.rect_stroke(
+                    rect,
+                    map.radius(7.0),
+                    Stroke::new(
+                        (1.5 * scale).max(1.0),
+                        if active { colour } else { palette.border },
+                    ),
+                    StrokeKind::Inside,
+                );
+                painter.text(
+                    rect.center(),
+                    Align2::CENTER_CENTER,
+                    label,
+                    FontId::proportional((20.0 * scale).max(11.0)),
+                    if active {
+                        on_colour(colour, palette)
+                    } else {
+                        palette.text
+                    },
+                );
+
+                if interactive && response.clicked() {
+                    let request = if is_source {
+                        match slot {
+                            0 => {
+                                let command = if channel.mute_a {
+                                    APICommand::DelSourceMuteTarget(
+                                        channel.id,
+                                        MuteTarget::TargetA,
+                                    )
+                                } else {
+                                    APICommand::AddSourceMuteTarget(
+                                        channel.id,
+                                        MuteTarget::TargetA,
+                                    )
+                                };
+                                Some(DaemonRequest::Pipewire(command))
+                            }
+                            1 => {
+                                let command = if channel.mute_b {
+                                    APICommand::DelSourceMuteTarget(
+                                        channel.id,
+                                        MuteTarget::TargetB,
+                                    )
+                                } else {
+                                    APICommand::AddSourceMuteTarget(
+                                        channel.id,
+                                        MuteTarget::TargetB,
+                                    )
+                                };
+                                Some(DaemonRequest::Pipewire(command))
+                            }
+                            2 => {
+                                self.swap.fetch_xor(1 << index, Ordering::Relaxed);
+                                None
+                            }
+                            _ => Some(DaemonRequest::Pipewire(
+                                APICommand::SetSourceVolumeLinked(channel.id, !channel.linked),
+                            )),
+                        }
+                    } else {
+                        match slot {
+                            0 => {
+                                let state = if channel.mute_a {
+                                    MuteState::Unmuted
+                                } else {
+                                    MuteState::Muted
+                                };
+                                Some(DaemonRequest::Pipewire(
+                                    APICommand::SetTargetMuteState(channel.id, state),
+                                ))
+                            }
+                            1 if channel.mix_b => Some(DaemonRequest::Pipewire(
+                                APICommand::SetTargetMix(channel.id, Mix::A),
+                            )),
+                            2 if !channel.mix_b => Some(DaemonRequest::Pipewire(
+                                APICommand::SetTargetMix(channel.id, Mix::B),
+                            )),
+                            _ => None,
+                        }
+                    };
+                    if let Some(request) = request {
+                        let _ = self.commands.try_send(request);
+                    }
+                }
+            }
         }
     }
 
@@ -1943,6 +2104,16 @@ fn draw_card_slider(
 fn blend(a: Color32, b: Color32, t: f32) -> Color32 {
     let mix = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round() as u8;
     Color32::from_rgb(mix(a.r(), b.r()), mix(a.g(), b.g()), mix(a.b(), b.b()))
+}
+
+fn on_colour(colour: Color32, palette: &theme::Palette) -> Color32 {
+    let luminance =
+        0.299 * colour.r() as f32 + 0.587 * colour.g() as f32 + 0.114 * colour.b() as f32;
+    if luminance > 120.0 {
+        palette.panel
+    } else {
+        palette.text
+    }
 }
 
 fn card_button(
