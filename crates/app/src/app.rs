@@ -2,7 +2,7 @@ use crate::theme::{self, Map};
 use eframe::egui;
 use egui::{
     Align, Align2, Color32, Context, FontId, Id, Layout, Rect, RichText, Sense, Stroke,
-    StrokeKind, UiBuilder, ViewportCommand, pos2, vec2,
+    StrokeKind, UiBuilder, Vec2, ViewportCommand, pos2, vec2,
 };
 use pipeweaver_smc_core::config::Config;
 use std::path::PathBuf;
@@ -44,6 +44,8 @@ pub struct SmcApp {
     config: Config,
     config_path: PathBuf,
     screen: Screen,
+    pipeweaver_online: bool,
+    mixer_online: bool,
     window_width: f32,
     restore_width: f32,
     restore_pos: Option<egui::Pos2>,
@@ -71,6 +73,8 @@ impl SmcApp {
             config,
             config_path,
             screen: Screen::Mixer,
+            pipeweaver_online: false,
+            mixer_online: false,
             window_width,
             restore_width: window_width,
             restore_pos: None,
@@ -201,31 +205,87 @@ impl SmcApp {
             self.toggle_maximize(ctx, monitor);
         }
 
-        let painter = ui.painter();
-        let name_size = (15.0 * map.scale).max(9.0);
-        painter.text(
-            map.point(36.0, 28.0),
-            Align2::LEFT_CENTER,
-            "PIPEWEAVER",
-            FontId::proportional(name_size),
-            theme::ACCENT,
-        );
-        painter.text(
-            map.point(190.0, 28.0),
-            Align2::LEFT_CENTER,
-            "SMC MIXER",
-            FontId::proportional(name_size),
-            theme::TEXT,
-        );
+        let palette = theme::palette(self.config.light_panel);
+        let font = FontId::proportional((15.0 * map.scale).max(9.0));
+        let dot = (7.0 * map.scale).max(4.0);
+        let text_gap = 8.0 * map.scale;
+        let group_gap = 80.0 * map.scale;
 
-        painter.circle_filled(map.point(420.0, 28.0), 3.2 * map.scale, theme::DIM);
-        painter.text(
-            map.point(432.0, 28.0),
-            Align2::LEFT_CENTER,
-            "Pipeweaver not connected",
-            FontId::proportional((10.0 * map.scale).max(7.0)),
-            theme::DIM,
-        );
+        let pw_width = ui
+            .painter()
+            .layout_no_wrap("PIPEWEAVER".to_owned(), font.clone(), palette.accent)
+            .size()
+            .x;
+        let smc_width = ui
+            .painter()
+            .layout_no_wrap("SMC-MIXER".to_owned(), font.clone(), palette.text)
+            .size()
+            .x;
+        let total = pw_width + text_gap + dot + group_gap + smc_width + text_gap + dot;
+        let start_x = map.rect.center().x - total * 0.5;
+        let line_y = map.point(0.0, theme::BEZEL_CENTER).y;
+
+        let pipeweaver_dot = pos2(start_x + pw_width + text_gap + dot * 0.5, line_y);
+        let smc_x = start_x + pw_width + text_gap + dot + group_gap;
+        let mixer_dot = pos2(smc_x + smc_width + text_gap + dot * 0.5, line_y);
+
+        let hit = Vec2::splat(dot.max(14.0));
+        ui.interact(
+            Rect::from_center_size(pipeweaver_dot, hit),
+            Id::unique(("pipeweaver-state",)),
+            Sense::hover(),
+        )
+        .on_hover_text(if self.pipeweaver_online {
+            "Pipeweaver: connected"
+        } else {
+            "Pipeweaver: not connected"
+        });
+        ui.interact(
+            Rect::from_center_size(mixer_dot, hit),
+            Id::unique(("mixer-state",)),
+            Sense::hover(),
+        )
+        .on_hover_text(if self.mixer_online {
+            "SMC mixer: connected"
+        } else {
+            "SMC mixer: not detected"
+        });
+
+        {
+            let painter = ui.painter();
+            painter.text(
+                pos2(start_x, line_y),
+                Align2::LEFT_CENTER,
+                "PIPEWEAVER",
+                font.clone(),
+                palette.accent,
+            );
+            painter.circle_filled(
+                pipeweaver_dot,
+                dot * 0.5,
+                if self.pipeweaver_online {
+                    palette.green
+                } else {
+                    palette.dim.gamma_multiply(0.7)
+                },
+            );
+            painter.text(
+                pos2(smc_x, line_y),
+                Align2::LEFT_CENTER,
+                "SMC-MIXER",
+                font,
+                palette.text,
+            );
+            painter.circle_filled(
+                mixer_dot,
+                dot * 0.5,
+                if self.mixer_online {
+                    palette.green
+                } else {
+                    palette.dim.gamma_multiply(0.7)
+                },
+            );
+        }
 
         for (index, tooltip) in ["Minimize", "Maximize", "Close"].iter().enumerate() {
             let rect = map.rect(theme::window_control_rect(index));
@@ -241,16 +301,16 @@ impl SmcApp {
             let painter = ui.painter();
             if hovered {
                 let fill = if index == 2 {
-                    theme::RED.gamma_multiply(0.25)
+                    palette.red.gamma_multiply(0.25)
                 } else {
-                    theme::CARD_HOVER
+                    palette.card_hover
                 };
                 painter.circle_filled(rect.center(), rect.width() * 0.5, fill);
             }
             let colour = if index == 2 && hovered {
-                theme::RED
+                palette.red
             } else {
-                theme::TEXT
+                palette.text
             };
             let centre = rect.center();
             let reach = rect.width() * 0.20;
@@ -306,6 +366,7 @@ impl SmcApp {
             (Screen::Mixer, theme::nav_mixer(), "MIXER"),
             (Screen::Config, theme::nav_config(), "CONFIG"),
         ];
+        let palette = theme::palette(self.config.light_panel);
         for (screen, rect, label) in entries {
             let rect = map.rect(rect);
             let response = ui.interact(rect, Id::unique(("nav", label)), Sense::click());
@@ -313,11 +374,11 @@ impl SmcApp {
             let on_config = self.screen == Screen::Config;
             let painter = ui.painter();
             if on_config {
-                painter.rect_filled(rect, map.radius(10.0), theme::CARD);
+                painter.rect_filled(rect, map.radius(10.0), palette.card);
                 painter.rect_stroke(
                     rect,
                     map.radius(10.0),
-                    Stroke::new((1.2 * map.scale).max(1.0), theme::BORDER),
+                    Stroke::new((1.2 * map.scale).max(1.0), palette.border),
                     StrokeKind::Inside,
                 );
             }
@@ -325,14 +386,14 @@ impl SmcApp {
                 painter.rect_filled(
                     rect.shrink(3.0 * map.scale),
                     map.radius(10.0),
-                    Color32::from_white_alpha(10),
+                    palette.hover,
                 );
             }
             if active {
                 painter.rect_stroke(
                     rect.shrink(3.0 * map.scale),
                     map.radius(10.0),
-                    Stroke::new((1.5 * map.scale).max(1.0), theme::ACCENT),
+                    Stroke::new((1.5 * map.scale).max(1.0), palette.accent),
                     StrokeKind::Inside,
                 );
             }
@@ -342,11 +403,9 @@ impl SmcApp {
                 label,
                 FontId::proportional((15.0 * map.scale).max(8.0)),
                 if active {
-                    theme::ACCENT
-                } else if on_config {
-                    theme::TEXT
+                    palette.accent
                 } else {
-                    theme::panel_text(self.config.light_panel)
+                    palette.text
                 },
             );
             if response.clicked() {
@@ -362,13 +421,14 @@ impl SmcApp {
         ctx: &Context,
         monitor: Option<Rect>,
     ) {
+        let palette = theme::palette(self.config.light_panel);
         let panel = map.rect(theme::config_panel());
         let painter = ui.painter();
-        painter.rect_filled(panel, map.radius(18.0), theme::PANEL);
+        painter.rect_filled(panel, map.radius(18.0), palette.panel);
         painter.rect_stroke(
             panel,
             map.radius(18.0),
-            Stroke::new(1.5 * map.scale, theme::BORDER),
+            Stroke::new(1.5 * map.scale, palette.border),
             StrokeKind::Inside,
         );
 
@@ -388,14 +448,14 @@ impl SmcApp {
                     RichText::new("Config")
                         .size(heading)
                         .strong()
-                        .color(theme::TEXT),
+                        .color(palette.text),
                 );
                 ui.label(
                     RichText::new(
                         "The shell is in place. Connection, surface and diagnostics arrive next.",
                     )
                     .size(label)
-                    .color(theme::DIM),
+                    .color(palette.dim),
                 );
                 ui.add_space(6.0);
                 ui.separator();
@@ -406,31 +466,31 @@ impl SmcApp {
                         RichText::new("Appearance")
                             .size(section)
                             .strong()
-                            .color(theme::TEXT),
+                            .color(palette.text),
                     );
                     columns[0].label(
                         RichText::new("Panel finish")
                             .size(label)
-                            .color(theme::DIM),
+                            .color(palette.dim),
                     );
-                    columns[0].checkbox(&mut light, "Light mixer panel");
+                    columns[0].checkbox(&mut light, "Light theme");
 
                     columns[0].add_space(12.0);
                     columns[0].label(
                         RichText::new("Window")
                             .size(section)
                             .strong()
-                            .color(theme::TEXT),
+                            .color(palette.text),
                     );
                     columns[0].label(
                         RichText::new(format!("Width: {width:.0} px"))
                             .size(label)
-                            .color(theme::TEXT),
+                            .color(palette.text),
                     );
                     columns[0].label(
                         RichText::new("Aspect ratio locked at 1987:967")
                             .size(label)
-                            .color(theme::DIM),
+                            .color(palette.dim),
                     );
                     if columns[0].button("Reset size").clicked() {
                         reset = true;
@@ -440,17 +500,17 @@ impl SmcApp {
                         RichText::new("Status")
                             .size(section)
                             .strong()
-                            .color(theme::TEXT),
+                            .color(palette.text),
                     );
                     columns[1].label(
                         RichText::new("Pipeweaver: not connected")
                             .size(label)
-                            .color(theme::DIM),
+                            .color(palette.dim),
                     );
                     columns[1].label(
                         RichText::new("MIDI: waiting")
                             .size(label)
-                            .color(theme::DIM),
+                            .color(palette.dim),
                     );
 
                     columns[1].add_space(12.0);
@@ -458,7 +518,7 @@ impl SmcApp {
                         RichText::new("About")
                             .size(section)
                             .strong()
-                            .color(theme::TEXT),
+                            .color(palette.text),
                     );
                     columns[1].label(
                         RichText::new(format!(
@@ -466,12 +526,12 @@ impl SmcApp {
                             theme::VERSION
                         ))
                         .size(label)
-                        .color(theme::TEXT),
+                        .color(palette.text),
                     );
                     columns[1].label(
                         RichText::new("Shell milestone")
                             .size(label)
-                            .color(theme::DIM),
+                            .color(palette.dim),
                     );
                 });
             },
@@ -479,6 +539,7 @@ impl SmcApp {
 
         if light != self.config.light_panel {
             self.config.light_panel = light;
+            ctx.set_visuals(theme::visuals(light));
             self.save_config();
         }
         if reset {
@@ -533,11 +594,7 @@ impl SmcApp {
         }
 
         let painter = ui.painter();
-        let colour = if self.screen == Screen::Config {
-            theme::DIM
-        } else {
-            theme::panel_dim(self.config.light_panel)
-        };
+        let colour = theme::palette(self.config.light_panel).dim;
         for step in 0..3 {
             let offset = 6.0 + step as f32 * 5.0;
             painter.line_segment(
@@ -552,6 +609,10 @@ impl SmcApp {
 }
 
 impl eframe::App for SmcApp {
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        [0.0, 0.0, 0.0, 0.0]
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         let monitor = monitor_rect(frame);
@@ -601,7 +662,7 @@ impl eframe::App for SmcApp {
         ctx.request_repaint_after(Duration::from_millis(50));
 
         egui::CentralPanel::default()
-            .frame(egui::Frame::NONE.fill(theme::BG))
+            .frame(egui::Frame::NONE.fill(Color32::TRANSPARENT))
             .show(ui, |ui| {
                 let map = Map::new(ui.max_rect());
                 self.paint_shell(ui, &map);

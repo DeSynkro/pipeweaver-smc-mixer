@@ -46,12 +46,16 @@ It's a very niche software for a niche situation, but I thought i'd share if any
 
 There is no release yet. The app is being rebuilt in milestones.
 
-Once the shell milestone lands, build and run from source:
+Build and run from source:
 
 ```sh
-cargo build --release
+./build/build.sh
+./build/install-desktop.sh
 ./build/run.sh --quiet
 ```
+
+The install step adds the desktop entry and hicolor icons, so the taskbar and
+launcher use the app logo instead of a generic icon.
 
 Start Pipeweaver first. The app starts in the tray when launched with `--quiet`, or shows the window when launched normally.
 
@@ -74,7 +78,7 @@ chmod +x Pipeweaver-SMC-Mixer-x86_64.AppImage
 - **Record button:** tap to show or hide the window, hold for one second to open the Pipeweaver UI.
 - **One window, two screens:** the mixer faceplate, and a Config screen in the same chassis.
 - **Frameless and aspect locked:** the faceplate is the window. It resizes without stretching.
-- **Light panel:** keep the app dark and switch only the mixer surface to a light finish.
+- **Light theme:** switch the whole app between the dark chassis and a light one.
 - **Tray and autostart:** close to tray, reopen with a click, start minimized on login.
 - **No telemetry:** no accounts, no analytics, no cloud.
 
@@ -96,7 +100,7 @@ The app keeps a small config file at:
 ~/.config/pipeweaver/pipeweaver-smc-mixer.json
 ```
 
-It stores the MIDI port, connection mode, mix labels, split, window width, light panel choice and start-minimized preference. Nothing else.
+It stores the MIDI port, connection mode, mix labels, split, window width, light theme choice and start-minimized preference. Nothing else.
 
 No audio, no daemon data and no telemetry leave your machine. The app only talks to Pipeweaver on localhost and to the mixer over MIDI.
 

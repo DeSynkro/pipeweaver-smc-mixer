@@ -55,12 +55,11 @@ TRANSPORT_Y = 814.5
 TRANSPORT_W = 86.0
 TRANSPORT_H = 40.0
 
-SHELL = "#0d1014"
-SHELL_LINE = "#1e252e"
-SHELL_EDGE = "#2f3742"
-
 DARK = {
     "name": "dark",
+    "shell": "#0d1014",
+    "shell_line": "#1e252e",
+    "shell_edge": "#2f3742",
     "panel": "#0d1014",
     "panel_line": "#1e252e",
     "edge": "#2f3742",
@@ -79,6 +78,9 @@ DARK = {
 
 LIGHT = {
     "name": "light",
+    "shell": "#eef2f7",
+    "shell_line": "#dbe3ec",
+    "shell_edge": "#c3ceda",
     "panel": "#ffffff",
     "panel_line": "#e6ebf1",
     "edge": "#c7d1dd",
@@ -212,9 +214,9 @@ def build(source: str, palette: dict) -> str:
         f'<svg width="{VIEW_W}" height="{VIEW_H}" viewBox="0 0 {VIEW_W} {VIEW_H}" '
         'fill="none" xmlns="http://www.w3.org/2000/svg">',
         f'  <rect x="2" y="2" width="1983" height="963" rx="42" '
-        f'fill="{SHELL}" stroke="{SHELL_EDGE}" stroke-width="4"/>',
+        f'fill="{palette["shell"]}" stroke="{palette["shell_edge"]}" stroke-width="4"/>',
         f'  <rect x="13" y="13" width="1961" height="941" rx="34" '
-        f'fill="none" stroke="{SHELL_LINE}" stroke-width="2"/>',
+        f'fill="none" stroke="{palette["shell_line"]}" stroke-width="2"/>',
     ]
 
     if palette["name"] == "light":
@@ -225,7 +227,7 @@ def build(source: str, palette: dict) -> str:
 
     parts.append(
         f'  <line x1="13" y1="{TOP}" x2="1974" y2="{TOP}" '
-        f'stroke="{SHELL_EDGE}" stroke-width="2"/>'
+        f'stroke="{palette["shell_edge"]}" stroke-width="2"/>'
     )
 
     parts.append(f'  <g transform="translate(0,{TOP})">')

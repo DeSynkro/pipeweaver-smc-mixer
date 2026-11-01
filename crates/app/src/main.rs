@@ -65,7 +65,7 @@ async fn main() -> Result<()> {
                 theme::APP_NAME,
                 options,
                 Box::new(move |cc| {
-                    cc.egui_ctx.set_visuals(theme::visuals());
+                    cc.egui_ctx.set_visuals(theme::visuals(config.light_panel));
                     cc.egui_ctx
                         .all_styles_mut(|style| style.interaction.tooltip_delay = 1.0);
                     egui_extras::install_image_loaders(&cc.egui_ctx);
@@ -100,6 +100,7 @@ fn window_options(config: &Config) -> eframe::NativeOptions {
                 theme::MIN_WINDOW_WIDTH / theme::ASPECT,
             ])
             .with_decorations(false)
+            .with_transparent(true)
             // Keeping the window non-resizable while it is mapped makes tiling
             // managers such as Krohnkite leave it floating. Resizing is
             // re-enabled once the window has settled, and the X11 window type
