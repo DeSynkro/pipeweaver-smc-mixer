@@ -161,10 +161,9 @@ fn window_options(config: &Config) -> eframe::NativeOptions {
             .with_transparent(true)
             // Keeping the window non-resizable while it is mapped makes tiling
             // managers such as Krohnkite leave it floating. Resizing is
-            // re-enabled once the window has settled, and the X11 window type
-            // is a second signal.
+            // re-enabled once the window has settled. The window stays a normal
+            // toplevel so the taskbar entry and minimise button work.
             .with_resizable(false)
-            .with_window_type(egui::X11WindowType::Utility)
             .with_app_id(theme::APP_ID)
             .with_title(theme::APP_NAME)
             .with_icon(Arc::new(window_icon())),
