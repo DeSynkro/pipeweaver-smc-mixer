@@ -46,9 +46,34 @@ fn choose<'a>(names: &'a [String], mode: MidiMode, wanted: &str) -> Option<&'a s
     }
 }
 
-pub fn detect(config: &Config) -> bool {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Link {
+    Offline,
+    Wired,
+    Bluetooth,
+}
+
+impl Link {
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::Offline => 0,
+            Self::Wired => 1,
+            Self::Bluetooth => 2,
+        }
+    }
+
+    pub const fn from_code(code: u8) -> Self {
+        match code {
+            1 => Self::Wired,
+            2 => Self::Bluetooth,
+            _ => Self::Offline,
+        }
+    }
+}
+
+pub fn detect(config: &Config) -> Link {
     let Ok(input) = MidiInput::new("pipeweaver-smc-mixer") else {
-        return false;
+        return Link::Offline;
     };
     let names: Vec<String> = input
         .ports()
@@ -56,7 +81,11 @@ pub fn detect(config: &Config) -> bool {
         .filter_map(|port| input.port_name(port).ok())
         .collect();
 
-    choose(&names, config.midi_mode, &config.midi_device).is_some()
+    match choose(&names, config.midi_mode, &config.midi_device) {
+        Some(name) if is_bluetooth(name) => Link::Bluetooth,
+        Some(_) => Link::Wired,
+        None => Link::Offline,
+    }
 }
 
 #[cfg(test)]

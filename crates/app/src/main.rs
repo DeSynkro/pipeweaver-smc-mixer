@@ -15,7 +15,7 @@ use simplelog::{
     TerminalMode, WriteLogger,
 };
 use std::fs::{self, OpenOptions};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -53,13 +53,15 @@ async fn main() -> Result<()> {
     });
     let tray_handle = tokio::spawn(tray::spawn(stop.clone(), tray_context.clone()));
 
-    let mixer_online = Arc::new(AtomicBool::new(false));
+    let midi_link = Arc::new(AtomicU8::new(midi::Link::Offline.code()));
     {
-        let online = mixer_online.clone();
+        let link = midi_link.clone();
         let config = initial.clone();
         tokio::spawn(async move {
             loop {
-                online.store(midi::detect(&config), Ordering::Relaxed);
+                let detected = midi::detect(&config);
+                log::debug!("MIDI link: {:?}", detected);
+                link.store(detected.code(), Ordering::Relaxed);
                 tokio::time::sleep(Duration::from_secs(2)).await;
             }
         });
@@ -99,7 +101,7 @@ async fn main() -> Result<()> {
             let config_path = config_path.clone();
             let tray_context = tray_context.clone();
             let engine = engine.clone();
-            let mixer_online = mixer_online.clone();
+            let midi_link = midi_link.clone();
 
             eframe::run_native(
                 theme::APP_NAME,
@@ -117,7 +119,7 @@ async fn main() -> Result<()> {
                         ui_on,
                         focus,
                         engine,
-                        mixer_online,
+                        midi_link,
                     )))
                 }),
             )?;

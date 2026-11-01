@@ -6,9 +6,10 @@ use egui::{
 };
 use pipeweaver_smc_core::config::Config;
 use pipeweaver_smc_core::{Engine, Snapshot, STRIP_COUNT};
+use crate::midi::Link;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -47,8 +48,8 @@ pub struct SmcApp {
     screen: Screen,
     pipeweaver_online: bool,
     engine: Arc<Engine>,
-    mixer_online: bool,
-    mixer_net: Arc<AtomicBool>,
+    midi: Link,
+    midi_net: Arc<AtomicU8>,
     window_width: f32,
     restore_width: f32,
     restore_pos: Option<egui::Pos2>,
@@ -58,6 +59,7 @@ pub struct SmcApp {
     resize_pointer: Option<f32>,
     enable_resize_at: Option<Instant>,
     pending_move: Option<(egui::Pos2, f32, Instant)>,
+    focus_at: Option<Instant>,
 }
 
 impl SmcApp {
@@ -68,7 +70,7 @@ impl SmcApp {
         ui_on: Arc<AtomicBool>,
         focus: Arc<AtomicBool>,
         engine: Arc<Engine>,
-        mixer_net: Arc<AtomicBool>,
+        midi_net: Arc<AtomicU8>,
     ) -> Self {
         let window_width = config.window_width();
         Self {
@@ -80,8 +82,8 @@ impl SmcApp {
             screen: Screen::Mixer,
             pipeweaver_online: false,
             engine,
-            mixer_online: false,
-            mixer_net,
+            midi: Link::Offline,
+            midi_net,
             window_width,
             restore_width: window_width,
             restore_pos: None,
@@ -91,6 +93,7 @@ impl SmcApp {
             resize_pointer: None,
             enable_resize_at: Some(Instant::now() + Duration::from_millis(700)),
             pending_move: None,
+            focus_at: Some(Instant::now() + Duration::from_millis(500)),
         }
     }
 
@@ -314,10 +317,10 @@ impl SmcApp {
             Id::unique(("mixer-state",)),
             Sense::hover(),
         )
-        .on_hover_text(if self.mixer_online {
-            "SMC mixer: connected"
-        } else {
-            "SMC mixer: not detected"
+        .on_hover_text(match self.midi {
+            Link::Wired => "SMC-Mixer: wired",
+            Link::Bluetooth => "SMC-Mixer: Bluetooth",
+            Link::Offline => "SMC-Mixer: not detected",
         });
 
         {
@@ -348,10 +351,10 @@ impl SmcApp {
             painter.circle_filled(
                 mixer_dot,
                 dot * 0.5,
-                if self.mixer_online {
-                    palette.green
-                } else {
-                    palette.red
+                match self.midi {
+                    Link::Wired => palette.green,
+                    Link::Bluetooth => palette.accent,
+                    Link::Offline => palette.red,
                 },
             );
         }
@@ -505,9 +508,9 @@ impl SmcApp {
         let width = self.window_width;
         let mut light = self.config.light_panel;
         let mut reset = false;
-        let heading = (26.0 * map.scale).max(16.0);
-        let label = (12.0 * map.scale).max(9.0);
-        let section = (13.0 * map.scale).max(10.0);
+        let heading = (34.0 * map.scale).max(22.0);
+        let label = (16.0 * map.scale).max(12.0);
+        let section = (18.0 * map.scale).max(13.0);
 
         ui.scope_builder(
             UiBuilder::new().max_rect(inner).layout(Layout::top_down(Align::LEFT)),
@@ -581,10 +584,10 @@ impl SmcApp {
                         .color(palette.dim),
                     );
                     columns[1].label(
-                        RichText::new(if self.mixer_online {
-                            "MIDI: SMC-Mixer detected"
-                        } else {
-                            "MIDI: waiting"
+                        RichText::new(match self.midi {
+                            Link::Wired => "MIDI: SMC-Mixer (wired)",
+                            Link::Bluetooth => "MIDI: SMC-Mixer (Bluetooth)",
+                            Link::Offline => "MIDI: waiting",
                         })
                         .size(label)
                         .color(palette.dim),
@@ -695,7 +698,7 @@ impl eframe::App for SmcApp {
         let monitor = monitor_rect(frame);
         let snapshot = self.engine.snapshot();
         self.pipeweaver_online = snapshot.connected;
-        self.mixer_online = self.mixer_net.load(Ordering::Relaxed);
+        self.midi = Link::from_code(self.midi_net.load(Ordering::Relaxed));
 
         // The window is created locked so tiling managers keep it floating.
         // Once it has been mapped, allow programmatic resizing again.
@@ -718,6 +721,12 @@ impl eframe::App for SmcApp {
             }
         }
 
+        if let Some(at) = self.focus_at {
+            if Instant::now() >= at {
+                ctx.send_viewport_cmd(ViewportCommand::Focus);
+                self.focus_at = None;
+            }
+        }
         if self.focus.swap(false, Ordering::Relaxed) {
             ctx.send_viewport_cmd(ViewportCommand::Focus);
         }
