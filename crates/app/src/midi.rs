@@ -725,16 +725,10 @@ fn handle_button(
     let _ = commands.try_send(request);
 }
 
-fn send_leds(
-    output: &mut MidiOutputConnection,
-    snapshot: &Snapshot,
-    swap: &AtomicU8,
-    last: &mut [u8; 32],
-) {
-    let swapped = swap.load(Ordering::Relaxed);
+fn led_pattern(snapshot: &Snapshot, swapped: u8) -> [u8; 32] {
     let mut desired = [LED_OFF; 32];
     for (index, channel) in snapshot.channels.iter().enumerate().take(8) {
-        if !channel.assigned {
+        if !snapshot.connected || !channel.assigned {
             continue;
         }
         desired[16 + index] = if channel.mute_a { LED_ON } else { LED_OFF };
@@ -753,7 +747,16 @@ fn send_leds(
             _ => LED_OFF,
         };
     }
+    desired
+}
 
+fn send_leds(
+    output: &mut MidiOutputConnection,
+    snapshot: &Snapshot,
+    swap: &AtomicU8,
+    last: &mut [u8; 32],
+) {
+    let desired = led_pattern(snapshot, swap.load(Ordering::Relaxed));
     send_pattern(output, &desired, last);
 }
 
@@ -794,8 +797,9 @@ fn startup_pattern(elapsed_ms: u64) -> Option<[u8; 32]> {
 
 #[cfg(test)]
 mod tests {
-    use super::{choose_index, device_key, output_candidates};
+    use super::{LED_OFF, LED_ON, choose_index, device_key, led_pattern, output_candidates};
     use pipeweaver_smc_core::config::MidiMode;
+    use pipeweaver_smc_core::engine::Snapshot;
 
     fn names(list: &[&str]) -> Vec<String> {
         list.iter().map(|name| name.to_string()).collect()
@@ -827,5 +831,21 @@ mod tests {
     fn output_falls_back_to_a_single_bidirectional_port() {
         let ports = names(&["SINCO:SINCO SMC-Mixer 44:0"]);
         assert_eq!(output_candidates(&ports, MidiMode::Wired, ""), vec![0]);
+    }
+
+    #[test]
+    fn leds_go_dark_when_pipeweaver_disconnects() {
+        let mut snapshot = Snapshot::default();
+        snapshot.connected = true;
+        snapshot.channels[0].assigned = true;
+        snapshot.channels[0].mute_a = true;
+        snapshot.channels[0].linked = false;
+
+        let live = led_pattern(&snapshot, 0);
+        assert_eq!(live[16], LED_ON);
+        assert_eq!(live[24], LED_ON);
+
+        snapshot.connected = false;
+        assert_eq!(led_pattern(&snapshot, 0), [LED_OFF; 32]);
     }
 }
