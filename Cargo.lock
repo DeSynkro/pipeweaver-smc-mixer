@@ -3653,6 +3653,7 @@ name = "pipeweaver-smc-core"
 version = "1.0.0"
 dependencies = [
  "anyhow",
+ "log",
  "pipeweaver-ipc",
  "pipeweaver-shared",
  "serde",

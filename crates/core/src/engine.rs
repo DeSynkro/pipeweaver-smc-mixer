@@ -76,9 +76,7 @@ impl Engine {
         Arc::new(Self {
             snapshot: RwLock::new(Arc::new(Snapshot::default())),
             meters: RwLock::new(HashMap::new()),
-            source_slots: RwLock::new(
-                source_slots.clamp(SURFACE_SOURCES_MIN, SURFACE_SOURCES_MAX),
-            ),
+            source_slots: RwLock::new(source_slots.clamp(SURFACE_SOURCES_MIN, SURFACE_SOURCES_MAX)),
             status: RwLock::new(None),
         })
     }
@@ -133,12 +131,7 @@ impl Engine {
     }
 
     pub fn meter(&self, id: Ulid) -> u8 {
-        self.meters
-            .read()
-            .unwrap()
-            .get(&id)
-            .copied()
-            .unwrap_or(0)
+        self.meters.read().unwrap().get(&id).copied().unwrap_or(0)
     }
 
     pub fn clear_meters(&self) {
@@ -206,17 +199,15 @@ fn source_channel(status: &DaemonStatus, id: Ulid) -> Option<Channel> {
                 id: device.description.id,
                 kind: ChannelKind::Source,
                 name: device.description.name.clone(),
-                colour: colour(device.description.colour.red, device.description.colour.green, device.description.colour.blue),
+                colour: colour(
+                    device.description.colour.red,
+                    device.description.colour.green,
+                    device.description.colour.blue,
+                ),
                 fader: device.volumes.volume[Mix::A],
                 knob: device.volumes.volume[Mix::B],
-                mute_a: device
-                    .mute_states
-                    .mute_state
-                    .contains(&MuteTarget::TargetA),
-                mute_b: device
-                    .mute_states
-                    .mute_state
-                    .contains(&MuteTarget::TargetB),
+                mute_a: device.mute_states.mute_state.contains(&MuteTarget::TargetA),
+                mute_b: device.mute_states.mute_state.contains(&MuteTarget::TargetB),
                 mix_b: false,
                 linked: device.volumes.volumes_linked.is_some(),
             });
@@ -230,17 +221,15 @@ fn source_channel(status: &DaemonStatus, id: Ulid) -> Option<Channel> {
                 id: device.description.id,
                 kind: ChannelKind::Source,
                 name: device.description.name.clone(),
-                colour: colour(device.description.colour.red, device.description.colour.green, device.description.colour.blue),
+                colour: colour(
+                    device.description.colour.red,
+                    device.description.colour.green,
+                    device.description.colour.blue,
+                ),
                 fader: device.volumes.volume[Mix::A],
                 knob: device.volumes.volume[Mix::B],
-                mute_a: device
-                    .mute_states
-                    .mute_state
-                    .contains(&MuteTarget::TargetA),
-                mute_b: device
-                    .mute_states
-                    .mute_state
-                    .contains(&MuteTarget::TargetB),
+                mute_a: device.mute_states.mute_state.contains(&MuteTarget::TargetA),
+                mute_b: device.mute_states.mute_state.contains(&MuteTarget::TargetB),
                 mix_b: false,
                 linked: device.volumes.volumes_linked.is_some(),
             });
@@ -260,7 +249,11 @@ fn target_channel(status: &DaemonStatus, id: Ulid) -> Option<Channel> {
                 id: device.description.id,
                 kind: ChannelKind::Target,
                 name: device.description.name.clone(),
-                colour: colour(device.description.colour.red, device.description.colour.green, device.description.colour.blue),
+                colour: colour(
+                    device.description.colour.red,
+                    device.description.colour.green,
+                    device.description.colour.blue,
+                ),
                 fader: device.volume,
                 knob: device.volume,
                 mute_a: device.mute_state == MuteState::Muted,
@@ -278,7 +271,11 @@ fn target_channel(status: &DaemonStatus, id: Ulid) -> Option<Channel> {
                 id: device.description.id,
                 kind: ChannelKind::Target,
                 name: device.description.name.clone(),
-                colour: colour(device.description.colour.red, device.description.colour.green, device.description.colour.blue),
+                colour: colour(
+                    device.description.colour.red,
+                    device.description.colour.green,
+                    device.description.colour.blue,
+                ),
                 fader: device.volume,
                 knob: device.volume,
                 mute_a: device.mute_state == MuteState::Muted,

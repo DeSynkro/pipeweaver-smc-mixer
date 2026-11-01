@@ -3,6 +3,9 @@ use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+
+static SAVE_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum MidiMode {
@@ -110,7 +113,25 @@ impl Config {
         let Ok(data) = fs::read_to_string(path) else {
             return Self::default();
         };
-        let mut config: Self = serde_json::from_str(&data).unwrap_or_default();
+        let mut config: Self = match serde_json::from_str(&data) {
+            Ok(config) => config,
+            Err(error) => {
+                let backup = path.with_extension("json.bad");
+                if let Err(copy_error) = fs::copy(path, &backup) {
+                    log::warn!(
+                        "Could not back up corrupt config {}: {copy_error}",
+                        path.display()
+                    );
+                } else {
+                    log::warn!(
+                        "Could not parse config {}: {error}; backed up to {}",
+                        path.display(),
+                        backup.display()
+                    );
+                }
+                Self::default()
+            }
+        };
         config.surface_sources = config
             .surface_sources
             .clamp(SURFACE_SOURCES_MIN, SURFACE_SOURCES_MAX);
@@ -118,6 +139,9 @@ impl Config {
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
+        let _guard = SAVE_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let parent = path
             .parent()
             .context("config path has no parent directory")?;
@@ -130,7 +154,9 @@ impl Config {
     }
 
     pub fn path() -> PathBuf {
-        config_home().join("pipeweaver").join(crate::identity::CONFIG_FILE)
+        config_home()
+            .join("pipeweaver")
+            .join(crate::identity::CONFIG_FILE)
     }
 
     pub fn window_width(&self) -> f32 {
@@ -213,9 +239,25 @@ pub fn runtime_dir() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::autostart_executable;
+    use super::{
+        Config, SURFACE_SOURCES_DEFAULT, SURFACE_SOURCES_MAX, SURFACE_SOURCES_MIN,
+        autostart_executable,
+    };
     use std::ffi::OsString;
+    use std::fs;
     use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_config_path(label: &str) -> PathBuf {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "pipeweaver-smc-mixer-{label}-{}-{stamp}.json",
+            std::process::id()
+        ))
+    }
 
     #[test]
     fn autostart_uses_the_appimage_path_when_present() {
@@ -223,10 +265,7 @@ mod tests {
             Some(OsString::from("/apps/Pipeweaver-SMC-Mixer.AppImage")),
             Some(PathBuf::from("/tmp/.mount/usr/bin/pipeweaver-smc-mixer")),
         );
-        assert_eq!(
-            exe,
-            PathBuf::from("/apps/Pipeweaver-SMC-Mixer.AppImage")
-        );
+        assert_eq!(exe, PathBuf::from("/apps/Pipeweaver-SMC-Mixer.AppImage"));
     }
 
     #[test]
@@ -236,5 +275,40 @@ mod tests {
             Some(PathBuf::from("/usr/bin/pipeweaver-smc-mixer")),
         );
         assert_eq!(exe, PathBuf::from("/usr/bin/pipeweaver-smc-mixer"));
+    }
+
+    #[test]
+    fn corrupt_config_is_backed_up_and_defaults_are_used() {
+        let path = temp_config_path("corrupt");
+        fs::write(&path, "{ not valid json").unwrap();
+
+        let config = Config::load(&path);
+
+        assert_eq!(config.surface_sources, SURFACE_SOURCES_DEFAULT);
+        let backup = path.with_extension("json.bad");
+        assert!(backup.exists());
+
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(&backup);
+    }
+
+    #[test]
+    fn concurrent_saves_leave_a_readable_config() {
+        let path = temp_config_path("concurrent");
+        let first = Config::default();
+        let mut second = Config::default();
+        second.surface_sources = SURFACE_SOURCES_MAX;
+
+        let first_path = path.clone();
+        let second_path = path.clone();
+        let first_thread = std::thread::spawn(move || first.save(&first_path).unwrap());
+        let second_thread = std::thread::spawn(move || second.save(&second_path).unwrap());
+        first_thread.join().unwrap();
+        second_thread.join().unwrap();
+
+        let loaded = Config::load(&path);
+        assert!((SURFACE_SOURCES_MIN..=SURFACE_SOURCES_MAX).contains(&loaded.surface_sources));
+
+        let _ = fs::remove_file(&path);
     }
 }
