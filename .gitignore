@@ -8,6 +8,8 @@
 /build/appimage/*.AppImage
 /build/appimage/tools/
 /build/backups/
+/build/docker/cargo-cache/
+/build/docker/out/
 
 # Personal project documents
 /docs

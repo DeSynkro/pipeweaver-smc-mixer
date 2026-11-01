@@ -46,13 +46,45 @@ It's a very niche software for a niche situation, but I thought i'd share if any
 
 There is no release yet. The app is being rebuilt in milestones.
 
+### Build requirements
+
+Building from source needs Rust 1.85 or newer (the workspace uses edition 2024), Cargo, a C linker, `pkg-config`, and the development headers for ALSA, X11/Wayland, OpenGL and D-Bus. On Debian/Ubuntu:
+
+```sh
+sudo apt install build-essential pkg-config git curl ca-certificates file \
+  libasound2-dev libx11-dev libx11-xcb-dev libxcb1-dev \
+  libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+  libxcb-randr0-dev libxcb-xkb-dev libxkbcommon-dev \
+  libxkbcommon-x11-dev libwayland-dev wayland-protocols \
+  libxrandr-dev libxi-dev libxcursor-dev libxinerama-dev \
+  libgl1-mesa-dev libegl1-mesa-dev libdbus-1-dev
+```
+
+### Building with Docker Compose
+
+If you have Docker Compose but not the build dependencies:
+
+```sh
+./build/build.sh docker
+# or
+./build/docker/build-in-docker.sh
+```
+
+It prompts for binary + AppImage, binary only, or AppImage only. Pressing Enter picks the default. The first run downloads the base image and Cargo dependencies; later runs reuse the cache in `build/docker/cargo-cache`.
+
+The container is build-only. It does not run the app or pass through the desktop, audio or MIDI devices. Plain `docker compose` is used when it works without sudo; otherwise the script uses `sudo docker compose`. Set `COMPOSE="..."` or `DOCKER="..."` to override.
+
+Docker outputs stay in `build/docker/out/`, separate from the native `build/binary/` and `build/appimage/` outputs. The container is Debian bookworm (glibc 2.36), so Docker-built binaries need glibc 2.36 or newer at runtime. The AppImage does not bundle glibc or the graphics/audio libraries, so it has the same baseline. See `build/docker/README.md` for details.
+
 Build and run from source:
 
 ```sh
-./build/build.sh
+./build/build.sh binary
 ./build/install-desktop.sh
 ./build/run.sh --quiet
 ```
+
+`./build/build.sh` with no argument opens a menu for Binary, AppImage or Docker. Pass `binary`, `appimage` or `docker` to skip the menu.
 
 The install step adds the desktop entry and hicolor icons, so the taskbar and
 launcher use the app logo instead of a generic icon.

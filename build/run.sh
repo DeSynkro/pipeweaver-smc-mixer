@@ -7,7 +7,7 @@ cd "$root"
 
 bin="build/binary/pipeweaver-smc-mixer"
 if [ ! -x "$bin" ]; then
-    ./build/build.sh
+    ./build/build.sh release
 fi
 
 # KWin consumes the first click of a native Wayland window to focus it, and

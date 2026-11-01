@@ -1,0 +1,18 @@
+services:
+  build:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: pipeweaver-smc-mixer-build
+    user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
+    environment:
+      CARGO_HOME: /cargo
+      HOME: /tmp
+      CARGO_TARGET_DIR: /out/target
+      BINARY_DIR: /out/binary
+      APPIMAGE_WORK_DIR: /out/appimage
+    volumes:
+      - ../..:/src
+      - ./cargo-cache:/cargo
+      - ./out:/out
+    working_dir: /src
