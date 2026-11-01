@@ -151,6 +151,19 @@ pub fn autostart_path() -> PathBuf {
         .join(format!("{}.desktop", crate::identity::APP_ID))
 }
 
+fn autostart_executable(
+    appimage: Option<std::ffi::OsString>,
+    current_exe: Option<PathBuf>,
+) -> PathBuf {
+    // Inside an AppImage, current_exe() points at the temporary mount. The
+    // autostart entry must point at the .AppImage file itself.
+    appimage
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .or(current_exe)
+        .unwrap_or_else(|| PathBuf::from(crate::identity::APP_ID))
+}
+
 pub fn set_autostart(enabled: bool) -> Result<()> {
     let path = autostart_path();
     if !enabled {
@@ -163,8 +176,10 @@ pub fn set_autostart(enabled: bool) -> Result<()> {
     }
     let parent = path.parent().context("autostart path has no parent")?;
     fs::create_dir_all(parent)?;
-    let exe = std::env::current_exe()
-        .unwrap_or_else(|_| PathBuf::from(crate::identity::APP_ID));
+    let exe = autostart_executable(env::var_os("APPIMAGE"), env::current_exe().ok())
+        .to_string_lossy()
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"");
     let entry = format!(
         "[Desktop Entry]\n\
          Type=Application\n\
@@ -175,7 +190,7 @@ pub fn set_autostart(enabled: bool) -> Result<()> {
          Terminal=false\n\
          X-GNOME-Autostart-enabled=true\n",
         crate::identity::APP_NAME,
-        exe.display(),
+        exe,
         crate::identity::APP_ID,
     );
     fs::write(&path, entry)?;
@@ -194,4 +209,32 @@ pub fn runtime_dir() -> PathBuf {
     env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(state_dir)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::autostart_executable;
+    use std::ffi::OsString;
+    use std::path::PathBuf;
+
+    #[test]
+    fn autostart_uses_the_appimage_path_when_present() {
+        let exe = autostart_executable(
+            Some(OsString::from("/apps/Pipeweaver-SMC-Mixer.AppImage")),
+            Some(PathBuf::from("/tmp/.mount/usr/bin/pipeweaver-smc-mixer")),
+        );
+        assert_eq!(
+            exe,
+            PathBuf::from("/apps/Pipeweaver-SMC-Mixer.AppImage")
+        );
+    }
+
+    #[test]
+    fn autostart_falls_back_when_appimage_is_empty() {
+        let exe = autostart_executable(
+            Some(OsString::new()),
+            Some(PathBuf::from("/usr/bin/pipeweaver-smc-mixer")),
+        );
+        assert_eq!(exe, PathBuf::from("/usr/bin/pipeweaver-smc-mixer"));
+    }
 }

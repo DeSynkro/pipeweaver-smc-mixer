@@ -134,6 +134,12 @@ The mixer is probably not running the right preset. The app expects the CC and L
 
 It was built on a newer distribution. Build from source on your machine if your glibc is older.
 
+### Start on login stopped working after moving the AppImage
+
+The autostart entry points at the AppImage file itself. If you move, rename or
+delete it, open Config, turn **Start on login** off and on again so the entry
+points at the new location.
+
 ### The window ends up in a tile
 
 Pipeweaver SMC Mixer is a fixed-aspect device panel, so it opens with a fixed
