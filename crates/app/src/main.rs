@@ -50,12 +50,19 @@ async fn main() -> Result<()> {
     let ui_on = Arc::new(AtomicBool::new(!start_minimized));
     let focus = Arc::new(AtomicBool::new(false));
     let minimized = Arc::new(AtomicBool::new(false));
+    let midi_mode = Arc::new(AtomicU8::new(initial.midi_mode.code()));
+    let pickup = Arc::new(AtomicBool::new(initial.pickup));
+    let record_hex = Arc::new(AtomicBool::new(initial.record_hex));
 
     let tray_context = Arc::new(tray::TrayContext {
         ui_on: ui_on.clone(),
         focus: focus.clone(),
         minimized: minimized.clone(),
         egui: Arc::new(Mutex::new(None)),
+        midi_mode: midi_mode.clone(),
+        pickup: pickup.clone(),
+        record_hex: record_hex.clone(),
+        config_path: config_path.clone(),
     });
     let tray_handle = tokio::spawn(tray::spawn(stop.clone(), tray_context.clone()));
 
@@ -159,8 +166,6 @@ async fn main() -> Result<()> {
         });
     }
     let swap = Arc::new(AtomicU8::new(0));
-    let pickup = Arc::new(AtomicBool::new(initial.pickup));
-    let record_hex = Arc::new(AtomicBool::new(initial.record_hex));
     let last_midi = Arc::new(AtomicU64::new(0));
     let led_test = Arc::new(AtomicBool::new(false));
     let startup_animation = Arc::new(AtomicBool::new(initial.startup_animation));
@@ -224,6 +229,7 @@ async fn main() -> Result<()> {
             let ui_commands = ui_commands.clone();
             let media_tx = media_tx.clone();
             let record_hex = record_hex.clone();
+            let midi_mode = midi_mode.clone();
             let mic_muted = mic_muted.clone();
             let minimized = minimized.clone();
             let last_midi = last_midi.clone();
@@ -248,6 +254,7 @@ async fn main() -> Result<()> {
                         focus,
                         engine,
                         midi_link,
+                        midi_mode,
                         swap,
                         pickup,
                         ui_commands,

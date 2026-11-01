@@ -59,6 +59,7 @@ pub struct SmcApp {
     engine: Arc<Engine>,
     midi: Link,
     midi_net: Arc<AtomicU8>,
+    midi_mode: Arc<AtomicU8>,
     swap: Arc<AtomicU8>,
     pickup_net: Arc<AtomicBool>,
     commands: Sender<DaemonRequest>,
@@ -96,6 +97,7 @@ impl SmcApp {
         focus: Arc<AtomicBool>,
         engine: Arc<Engine>,
         midi_net: Arc<AtomicU8>,
+        midi_mode: Arc<AtomicU8>,
         swap: Arc<AtomicU8>,
         pickup_net: Arc<AtomicBool>,
         commands: Sender<DaemonRequest>,
@@ -120,6 +122,7 @@ impl SmcApp {
             engine,
             midi: Link::Offline,
             midi_net,
+            midi_mode,
             swap,
             pickup_net,
             commands,
@@ -150,6 +153,9 @@ impl SmcApp {
     }
 
     fn save_config(&mut self) {
+        self.config.midi_mode = MidiMode::from_code(self.midi_mode.load(Ordering::Relaxed));
+        self.config.pickup = self.pickup_net.load(Ordering::Relaxed);
+        self.config.record_hex = self.record_hex.load(Ordering::Relaxed);
         self.config.window_width = if self.maximized {
             self.restore_width
         } else {
@@ -1289,7 +1295,8 @@ impl SmcApp {
                             .size(label)
                             .color(palette.dim),
                     );
-                    let mut midi_mode = self.config.midi_mode;
+                    let mut midi_mode =
+                        MidiMode::from_code(self.midi_mode.load(Ordering::Relaxed));
                     let combo_width = (150.0 * map.scale).max(110.0);
                     let combo_height = (26.0 * map.scale).max(20.0);
                     columns[1].horizontal(|ui| {
@@ -1377,6 +1384,7 @@ impl SmcApp {
                     );
                     if midi_mode != self.config.midi_mode {
                         self.config.midi_mode = midi_mode;
+                        self.midi_mode.store(midi_mode.code(), Ordering::Relaxed);
                         self.save_config();
                     }
 

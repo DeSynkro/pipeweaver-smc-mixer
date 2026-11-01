@@ -12,6 +12,24 @@ pub enum MidiMode {
     Bluetooth,
 }
 
+impl MidiMode {
+    pub fn code(self) -> u8 {
+        match self {
+            Self::Auto => 0,
+            Self::Wired => 1,
+            Self::Bluetooth => 2,
+        }
+    }
+
+    pub fn from_code(code: u8) -> Self {
+        match code {
+            1 => Self::Wired,
+            2 => Self::Bluetooth,
+            _ => Self::Auto,
+        }
+    }
+}
+
 pub const SURFACE_SOURCES_MIN: usize = 4;
 pub const SURFACE_SOURCES_MAX: usize = 8;
 pub const SURFACE_SOURCES_DEFAULT: usize = 6;
