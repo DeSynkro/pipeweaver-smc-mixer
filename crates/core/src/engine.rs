@@ -16,6 +16,7 @@ pub enum ChannelKind {
 #[derive(Clone, Debug)]
 pub struct Channel {
     pub assigned: bool,
+    pub id: Ulid,
     pub kind: ChannelKind,
     pub name: String,
     pub colour: (u8, u8, u8),
@@ -29,6 +30,7 @@ impl Default for Channel {
     fn default() -> Self {
         Self {
             assigned: false,
+            id: Ulid::nil(),
             kind: ChannelKind::Source,
             name: String::new(),
             colour: (120, 130, 143),
@@ -119,6 +121,7 @@ fn source_channel(status: &DaemonStatus, id: Ulid) -> Option<Channel> {
         if device.description.id == id {
             return Some(Channel {
                 assigned: true,
+                id: device.description.id,
                 kind: ChannelKind::Source,
                 name: device.description.name.clone(),
                 colour: colour(device.description.colour.red, device.description.colour.green, device.description.colour.blue),
@@ -137,6 +140,7 @@ fn source_channel(status: &DaemonStatus, id: Ulid) -> Option<Channel> {
         if device.description.id == id {
             return Some(Channel {
                 assigned: true,
+                id: device.description.id,
                 kind: ChannelKind::Source,
                 name: device.description.name.clone(),
                 colour: colour(device.description.colour.red, device.description.colour.green, device.description.colour.blue),
@@ -161,6 +165,7 @@ fn target_channel(status: &DaemonStatus, id: Ulid) -> Option<Channel> {
         if device.description.id == id {
             return Some(Channel {
                 assigned: true,
+                id: device.description.id,
                 kind: ChannelKind::Target,
                 name: device.description.name.clone(),
                 colour: colour(device.description.colour.red, device.description.colour.green, device.description.colour.blue),
@@ -176,6 +181,7 @@ fn target_channel(status: &DaemonStatus, id: Ulid) -> Option<Channel> {
         if device.description.id == id {
             return Some(Channel {
                 assigned: true,
+                id: device.description.id,
                 kind: ChannelKind::Target,
                 name: device.description.name.clone(),
                 colour: colour(device.description.colour.red, device.description.colour.green, device.description.colour.blue),

@@ -68,12 +68,13 @@ async fn main() -> Result<()> {
     }
 
     let engine = Engine::new();
+    let (command_tx, command_rx) = tokio::sync::mpsc::channel(128);
     {
         let source_slots = initial.surface_sources;
-        let (command_tx, command_rx) = tokio::sync::mpsc::channel(10);
         let (broadcast_tx, mut broadcast_rx) = tokio::sync::broadcast::channel(10);
         let stop_handler = spawn_pipeweaver_handler(command_rx, broadcast_tx).await;
         let engine = engine.clone();
+        let command_tx = command_tx.clone();
         tokio::spawn(async move {
             let _command_tx = command_tx;
             let _stop_handler = stop_handler;
@@ -88,6 +89,11 @@ async fn main() -> Result<()> {
                 }
             }
         });
+    }
+    {
+        let config = initial.clone();
+        let engine = engine.clone();
+        std::thread::spawn(move || midi::run_controls(config, engine, command_tx));
     }
 
     while !stop.load(Ordering::Relaxed) {

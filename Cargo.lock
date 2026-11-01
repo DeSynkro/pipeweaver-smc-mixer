@@ -3675,6 +3675,7 @@ dependencies = [
  "log",
  "midir",
  "pipeweaver-ipc",
+ "pipeweaver-shared",
  "pipeweaver-smc-core",
  "pipeweaver-websocket-client",
  "simplelog",
