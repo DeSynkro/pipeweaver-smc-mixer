@@ -65,6 +65,8 @@ pub struct SmcApp {
     commands: Sender<DaemonRequest>,
     drawer_open: bool,
     drawer_t: f32,
+    offline_since: Option<Instant>,
+    offline_t: f32,
     reversed: HashSet<Ulid>,
     media_tx: tokio::sync::mpsc::UnboundedSender<MediaCommand>,
     record_hex: Arc<AtomicBool>,
@@ -128,6 +130,8 @@ impl SmcApp {
             commands,
             drawer_open: false,
             drawer_t: 0.0,
+            offline_since: None,
+            offline_t: 0.0,
             reversed: HashSet::new(),
             media_tx,
             record_hex,
@@ -270,7 +274,9 @@ impl SmcApp {
         let painter = ui.painter();
         let swapped = self.swap.load(Ordering::Relaxed);
         let scale = map.scale;
-        let interactive = self.screen == Screen::Mixer && self.drawer_t <= 0.01;
+        let interactive =
+            self.screen == Screen::Mixer && self.drawer_t <= 0.01 && snapshot.connected;
+        let offline = self.offline_t;
         let channel_colours = self.config.channel_colours;
         let mix_colour = |is_b: bool| {
             if is_b { palette.amber } else { palette.accent }
@@ -324,8 +330,10 @@ impl SmcApp {
             } else {
                 false
             };
-            let fader_colour = if fader_muted { palette.red } else { fader_base };
-            let knob_colour = if knob_muted { palette.red } else { knob_base };
+            let fader_colour = if fader_muted { palette.red } else { fader_base }
+                .lerp_to_gamma(palette.dim, offline);
+            let knob_colour = if knob_muted { palette.red } else { knob_base }
+                .lerp_to_gamma(palette.dim, offline);
             let knob_disabled = !is_source;
             let labels = &self.config.mix_labels;
             let mut knob_hovered = false;
@@ -443,7 +451,7 @@ impl SmcApp {
                     vec2(name_width + 8.0 * scale, (2.5 * scale).max(1.5)),
                 ),
                 0,
-                channel_colour,
+                channel_colour.lerp_to_gamma(palette.dim, offline),
             );
 
             let centre = map.point(base + 51.5, 170.0);
@@ -740,6 +748,43 @@ impl SmcApp {
                 }
             }
         }
+    }
+
+    fn paint_offline(&self, ui: &egui::Ui, map: &Map) {
+        if self.screen != Screen::Mixer || self.offline_t <= 0.01 {
+            return;
+        }
+        let t = self.offline_t;
+        let palette = theme::palette(self.config.light_panel);
+        let painter = ui.painter();
+
+        let card = Rect::from_center_size(map.point(993.5, 462.0), map.size(vec2(660.0, 132.0)));
+        let card_fill = if self.config.light_panel {
+            Color32::from_rgba_unmultiplied(250, 250, 252, (236.0 * t) as u8)
+        } else {
+            Color32::from_rgba_unmultiplied(19, 23, 29, (236.0 * t) as u8)
+        };
+        painter.rect_filled(card, map.radius(16.0), card_fill);
+        painter.rect_stroke(
+            card,
+            map.radius(16.0),
+            Stroke::new((1.2 * map.scale).max(1.0), palette.border.gamma_multiply(t)),
+            StrokeKind::Inside,
+        );
+        painter.text(
+            card.center() - vec2(0.0, (16.0 * map.scale).max(10.0)),
+            Align2::CENTER_CENTER,
+            "Pipeweaver is not connected",
+            FontId::proportional((26.0 * map.scale).max(17.0)),
+            palette.text.gamma_multiply(t),
+        );
+        painter.text(
+            card.center() + vec2(0.0, (24.0 * map.scale).max(14.0)),
+            Align2::CENTER_CENTER,
+            "Start Pipeweaver and it will reconnect automatically.",
+            FontId::proportional((15.0 * map.scale).max(10.5)),
+            palette.dim.gamma_multiply(t),
+        );
     }
 
     fn paint_transport(&mut self, ui: &mut egui::Ui, map: &Map) {
@@ -1658,7 +1703,7 @@ impl SmcApp {
             self.drawer_t = 0.0;
             return;
         }
-        if self.config.hide_off_surface {
+        if self.config.hide_off_surface || !snapshot.connected {
             self.drawer_open = false;
             self.drawer_t = 0.0;
             return;
@@ -1952,6 +1997,24 @@ impl eframe::App for SmcApp {
         let monitor = monitor_rect(frame);
         let snapshot = self.engine.snapshot();
         self.pipeweaver_online = snapshot.connected;
+        if snapshot.connected {
+            self.offline_since = None;
+        } else if self.offline_since.is_none() {
+            self.offline_since = Some(Instant::now());
+        }
+        let offline_target = if !snapshot.connected
+            && self
+                .offline_since
+                .is_some_and(|at| at.elapsed() >= Duration::from_secs(1))
+        {
+            1.0
+        } else {
+            0.0
+        };
+        self.offline_t += (offline_target - self.offline_t) * 0.25;
+        if (offline_target - self.offline_t).abs() < 0.01 {
+            self.offline_t = offline_target;
+        }
         self.midi = Link::from_code(self.midi_net.load(Ordering::Relaxed));
         if let Some(at) = self.minimize_at {
             if Instant::now() >= at + Duration::from_millis(400)
@@ -2023,6 +2086,7 @@ impl eframe::App for SmcApp {
                 let map = Map::new(ui.max_rect());
                 self.paint_shell(ui, &map);
                 self.paint_channels(ui, &map, &snapshot);
+                self.paint_offline(ui, &map);
                 self.paint_transport(ui, &map);
                 self.paint_bezel(ui, &map, &ctx, monitor);
                 if self.screen == Screen::Config {
