@@ -22,7 +22,8 @@ pub struct Channel {
     pub colour: (u8, u8, u8),
     pub fader: u8,
     pub knob: u8,
-    pub muted: bool,
+    pub mute_a: bool,
+    pub mute_b: bool,
     pub linked: bool,
 }
 
@@ -36,7 +37,8 @@ impl Default for Channel {
             colour: (120, 130, 143),
             fader: 0,
             knob: 0,
-            muted: false,
+            mute_a: false,
+            mute_b: false,
             linked: false,
         }
     }
@@ -127,10 +129,14 @@ fn source_channel(status: &DaemonStatus, id: Ulid) -> Option<Channel> {
                 colour: colour(device.description.colour.red, device.description.colour.green, device.description.colour.blue),
                 fader: device.volumes.volume[Mix::A],
                 knob: device.volumes.volume[Mix::B],
-                muted: device
+                mute_a: device
                     .mute_states
                     .mute_state
                     .contains(&MuteTarget::TargetA),
+                mute_b: device
+                    .mute_states
+                    .mute_state
+                    .contains(&MuteTarget::TargetB),
                 linked: device.volumes.volumes_linked.is_some(),
             });
         }
@@ -146,10 +152,14 @@ fn source_channel(status: &DaemonStatus, id: Ulid) -> Option<Channel> {
                 colour: colour(device.description.colour.red, device.description.colour.green, device.description.colour.blue),
                 fader: device.volumes.volume[Mix::A],
                 knob: device.volumes.volume[Mix::B],
-                muted: device
+                mute_a: device
                     .mute_states
                     .mute_state
                     .contains(&MuteTarget::TargetA),
+                mute_b: device
+                    .mute_states
+                    .mute_state
+                    .contains(&MuteTarget::TargetB),
                 linked: device.volumes.volumes_linked.is_some(),
             });
         }
@@ -171,7 +181,8 @@ fn target_channel(status: &DaemonStatus, id: Ulid) -> Option<Channel> {
                 colour: colour(device.description.colour.red, device.description.colour.green, device.description.colour.blue),
                 fader: device.volume,
                 knob: device.volume,
-                muted: device.mute_state == MuteState::Muted,
+                mute_a: device.mute_state == MuteState::Muted,
+                mute_b: device.mix == Mix::B,
                 linked: false,
             });
         }
@@ -187,7 +198,8 @@ fn target_channel(status: &DaemonStatus, id: Ulid) -> Option<Channel> {
                 colour: colour(device.description.colour.red, device.description.colour.green, device.description.colour.blue),
                 fader: device.volume,
                 knob: device.volume,
-                muted: device.mute_state == MuteState::Muted,
+                mute_a: device.mute_state == MuteState::Muted,
+                mute_b: device.mix == Mix::B,
                 linked: false,
             });
         }

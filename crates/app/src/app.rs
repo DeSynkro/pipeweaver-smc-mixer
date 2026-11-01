@@ -206,7 +206,7 @@ impl SmcApp {
             }
 
             let base = 100.5 + 215.0 * index as f32;
-            let colour = if channel.muted {
+            let colour = if channel.mute_a {
                 palette.dim
             } else {
                 Color32::from_rgb(channel.colour.0, channel.colour.1, channel.colour.2)
