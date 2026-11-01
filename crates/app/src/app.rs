@@ -1,7 +1,7 @@
 use crate::theme::{self, Map};
 use eframe::egui;
 use egui::{
-    Align, Align2, Color32, Context, FontId, Id, Layout, Rect, RichText, Sense, Stroke,
+    Align, Align2, Color32, Context, FontId, Id, Layout, Rect, RichText, Sense, Shape, Stroke,
     StrokeKind, UiBuilder, Vec2, ViewportCommand, pos2, vec2,
 };
 use pipeweaver_smc_core::config::Config;
@@ -204,70 +204,140 @@ impl SmcApp {
     fn paint_channels(&self, ui: &egui::Ui, map: &Map, snapshot: &Snapshot) {
         let palette = theme::palette(self.config.light_panel);
         let painter = ui.painter();
-        let text_size = (8.5 * map.scale).max(6.0);
         let swapped = self.swap.load(Ordering::Relaxed);
+        let scale = map.scale;
 
         for (index, channel) in snapshot.channels.iter().enumerate().take(STRIP_COUNT) {
             if !channel.assigned {
                 continue;
             }
 
-            let is_swapped =
-                channel.kind == ChannelKind::Source && swapped & (1 << index) != 0;
+            let base = 100.5 + 215.0 * index as f32;
+            let is_source = channel.kind == ChannelKind::Source;
+            let is_swapped = is_source && swapped & (1 << index) != 0;
             let (fader, knob) = if is_swapped {
                 (channel.knob, channel.fader)
             } else {
                 (channel.fader, channel.knob)
             };
-
-            let base = 100.5 + 215.0 * index as f32;
-            let colour = if channel.mute_a {
-                palette.dim
+            let channel_colour =
+                Color32::from_rgb(channel.colour.0, channel.colour.1, channel.colour.2);
+            let active_colour = if channel.mute_a {
+                palette.red
             } else {
-                Color32::from_rgb(channel.colour.0, channel.colour.1, channel.colour.2)
+                channel_colour
             };
+            let knob_disabled = !is_source;
 
             let plate = map.rect(Rect::from_min_size(
                 pos2(base + 10.0, 271.5),
                 vec2(82.0, 20.0),
             ));
             painter.rect_filled(
-                Rect::from_min_size(plate.min, vec2(plate.width(), (2.5 * map.scale).max(1.0))),
+                plate,
+                map.radius(3.0),
+                Color32::from_rgba_unmultiplied(
+                    channel.colour.0,
+                    channel.colour.1,
+                    channel.colour.2,
+                    28,
+                ),
+            );
+            painter.rect_filled(
+                Rect::from_min_size(plate.min, vec2(plate.width(), (2.5 * scale).max(1.0))),
                 0,
-                colour,
+                channel_colour,
             );
             painter.with_clip_rect(plate).text(
                 plate.center(),
                 Align2::CENTER_CENTER,
                 &channel.name,
-                FontId::proportional(text_size),
+                FontId::proportional((9.0 * scale).max(6.0)),
                 palette.text,
             );
 
-            let slot_top = 350.0;
-            let slot_height = 451.0;
-            let y = slot_top + (1.0 - fader as f32 / 100.0) * slot_height;
-            let cap = Rect::from_center_size(
-                map.point(base + 51.0, y),
-                map.size(vec2(54.0, 13.0)),
-            );
-            painter.rect_filled(cap, map.radius(3.0), colour);
+            let centre = map.point(base + 51.5, 170.0);
+            let cap_radius = 44.0 * scale;
+            if knob_disabled {
+                painter.circle_filled(centre, cap_radius, palette.card.gamma_multiply(0.7));
+                painter.circle_stroke(
+                    centre,
+                    cap_radius,
+                    Stroke::new((1.5 * scale).max(1.0), palette.border),
+                );
+            } else {
+                let arc_radius = 52.0 * scale;
+                let start_angle = -135.0f32.to_radians();
+                let end_angle =
+                    start_angle + 270.0f32.to_radians() * (knob as f32 / 100.0);
+                let steps = 48;
+                let mut points = Vec::with_capacity(steps + 1);
+                for step in 0..=steps {
+                    let angle = start_angle + (end_angle - start_angle) * step as f32 / steps as f32;
+                    points.push(centre + vec2(angle.sin(), -angle.cos()) * arc_radius);
+                }
+                if knob > 0 {
+                    painter.add(Shape::line(
+                        points,
+                        Stroke::new((3.0 * scale).max(1.5), active_colour),
+                    ));
+                }
+
+                painter.circle_filled(centre, cap_radius, palette.card);
+                painter.circle_stroke(
+                    centre,
+                    cap_radius,
+                    Stroke::new((1.5 * scale).max(1.0), palette.border),
+                );
+                let pointer_angle = -135.0f32.to_radians()
+                    + 270.0f32.to_radians() * (knob as f32 / 100.0);
+                let tip = centre
+                    + vec2(pointer_angle.sin(), -pointer_angle.cos()) * (36.0 * scale);
+                painter.line_segment(
+                    [centre, tip],
+                    Stroke::new((3.0 * scale).max(1.5), active_colour),
+                );
+                painter.text(
+                    centre + vec2(0.0, 84.0 * scale),
+                    Align2::CENTER_CENTER,
+                    format!("{knob}%"),
+                    FontId::proportional((10.0 * scale).max(7.0)),
+                    palette.dim,
+                );
+            }
+
+            let slot_x = base + 43.5;
+            let fill_top = 350.0 + 451.0 * (1.0 - fader as f32 / 100.0);
+            if fader > 0 {
+                let fill = map.rect(Rect::from_min_size(
+                    pos2(slot_x, fill_top),
+                    vec2(15.0, 801.0 - fill_top),
+                ));
+                painter.rect_filled(fill, map.radius(6.0), active_colour);
+            }
+
+            let thumb_centre = map.point(slot_x + 7.5, fill_top);
+            let thumb = Rect::from_center_size(thumb_centre, map.size(vec2(74.0, 32.0)));
+            painter.rect_filled(thumb, map.radius(6.0), palette.card_hover);
             painter.rect_stroke(
-                cap,
-                map.radius(3.0),
-                Stroke::new((1.0 * map.scale).max(1.0), palette.border),
+                thumb,
+                map.radius(6.0),
+                Stroke::new((1.5 * scale).max(1.0), palette.border),
                 StrokeKind::Inside,
             );
-
-            let angle = (-135.0 + 270.0 * knob as f32 / 100.0).to_radians();
-            let centre = map.point(base + 51.5, 170.0);
-            let direction = vec2(angle.sin(), -angle.cos());
             painter.line_segment(
                 [
-                    centre + direction * (36.0 * map.scale),
-                    centre + direction * (54.0 * map.scale),
+                    pos2(thumb.left() + 6.0 * scale, thumb.center().y),
+                    pos2(thumb.right() - 6.0 * scale, thumb.center().y),
                 ],
-                Stroke::new((3.0 * map.scale).max(1.5), colour),
+                Stroke::new((2.0 * scale).max(1.0), active_colour),
+            );
+            painter.text(
+                thumb.center(),
+                Align2::CENTER_CENTER,
+                format!("{fader}%"),
+                FontId::proportional((11.0 * scale).max(7.0)),
+                palette.text,
             );
         }
     }
