@@ -245,6 +245,7 @@ impl SmcApp {
         let painter = ui.painter();
         let swapped = self.swap.load(Ordering::Relaxed);
         let scale = map.scale;
+        let interactive = self.screen == Screen::Mixer && self.drawer_t <= 0.01;
         let channel_colours = self.config.channel_colours;
         let mix_colour = |is_b: bool| {
             if is_b {
@@ -262,7 +263,7 @@ impl SmcApp {
             let base = 100.5 + 215.0 * index as f32;
             let is_source = channel.kind == ChannelKind::Source;
             let is_swapped = is_source && swapped & (1 << index) != 0;
-            let (fader, knob) = if is_swapped {
+            let (mut fader, mut knob) = if is_swapped {
                 (channel.knob, channel.fader)
             } else {
                 (channel.fader, channel.knob)
@@ -313,6 +314,96 @@ impl SmcApp {
                 knob_base
             };
             let knob_disabled = !is_source;
+            let labels = &self.config.mix_labels;
+            let mut knob_hovered = false;
+
+            if interactive {
+                let knob_centre = map.point(base + 51.5, 170.0);
+                let knob_rect = Rect::from_center_size(knob_centre, Vec2::splat(147.0 * scale));
+                let knob_id = Id::unique(("surface-knob", index));
+                if knob_disabled {
+                    ui.interact(knob_rect, knob_id, Sense::hover())
+                        .on_hover_text("Targets have no Audience control");
+                } else {
+                    let response = ui.interact(knob_rect, knob_id, Sense::click_and_drag());
+                    knob_hovered = response.hovered();
+                    if response.drag_started() {
+                        if let Some(pos) = response.interact_pointer_pos() {
+                            ui.ctx()
+                                .data_mut(|data| data.insert_temp(knob_id, (knob, pos.y, knob)));
+                        }
+                    }
+                    if response.dragged() {
+                        if let (Some((start_value, start_y, last)), Some(pos)) = (
+                            ui.ctx().data(|data| data.get_temp::<(u8, f32, u8)>(knob_id)),
+                            response.interact_pointer_pos(),
+                        ) {
+                            let delta = (start_y - pos.y) / (150.0 * scale) * 100.0;
+                            let next =
+                                (start_value as f32 + delta).clamp(0.0, 100.0).round() as u8;
+                            if next != last {
+                                ui.ctx().data_mut(|data| {
+                                    data.insert_temp(knob_id, (start_value, start_y, next))
+                                });
+                                let _ = self.commands.try_send(DaemonRequest::Pipewire(
+                                    APICommand::SetSourceVolume(
+                                        channel.id,
+                                        if is_swapped { Mix::A } else { Mix::B },
+                                        next,
+                                    ),
+                                ));
+                            }
+                            knob = next;
+                        }
+                    }
+                    let knob_label = if is_swapped { &labels[0] } else { &labels[1] };
+                    response.on_hover_text(format!("Drag to set the {knob_label} level"));
+                }
+
+                let well = map.rect(Rect::from_min_size(pos2(base, 319.5), vec2(102.0, 511.0)));
+                let fader_id = Id::unique(("surface-fader", index));
+                let response = ui.interact(well, fader_id, Sense::click_and_drag());
+                if response.drag_started() {
+                    ui.ctx().data_mut(|data| data.insert_temp(fader_id, fader));
+                }
+                if response.dragged() || response.clicked() {
+                    if let Some(pos) = response.interact_pointer_pos() {
+                        let track_top = map.point(base + 43.5, 350.0).y;
+                        let track_bottom = map.point(base + 43.5, 801.0).y;
+                        let fraction =
+                            ((track_bottom - pos.y) / (track_bottom - track_top)).clamp(0.0, 1.0);
+                        let next = (fraction * 100.0).round() as u8;
+                        let last = ui
+                            .ctx()
+                            .data(|data| data.get_temp::<u8>(fader_id))
+                            .unwrap_or(fader);
+                        if next != last {
+                            ui.ctx().data_mut(|data| data.insert_temp(fader_id, next));
+                            let command = if is_source {
+                                DaemonRequest::Pipewire(APICommand::SetSourceVolume(
+                                    channel.id,
+                                    if is_swapped { Mix::B } else { Mix::A },
+                                    next,
+                                ))
+                            } else {
+                                DaemonRequest::Pipewire(APICommand::SetTargetVolume(
+                                    channel.id, next,
+                                ))
+                            };
+                            let _ = self.commands.try_send(command);
+                        }
+                        fader = next;
+                    }
+                }
+                let fader_label = if is_source {
+                    if is_swapped { &labels[1] } else { &labels[0] }
+                } else if channel.mix_b {
+                    &labels[1]
+                } else {
+                    &labels[0]
+                };
+                response.on_hover_text(format!("Drag to set the {fader_label} level"));
+            }
 
             let plate = map.rect(Rect::from_min_size(
                 pos2(base + 1.0, 286.0),
@@ -366,11 +457,21 @@ impl SmcApp {
                     ));
                 }
 
-                painter.circle_filled(centre, cap_radius, palette.card);
+                let cap_fill = if knob_hovered {
+                    blend(palette.card, palette.accent, 0.25)
+                } else {
+                    palette.card
+                };
+                let cap_border = if knob_hovered {
+                    palette.accent
+                } else {
+                    palette.border
+                };
+                painter.circle_filled(centre, cap_radius, cap_fill);
                 painter.circle_stroke(
                     centre,
                     cap_radius,
-                    Stroke::new((1.5 * scale).max(1.0), palette.border),
+                    Stroke::new((1.5 * scale).max(1.0), cap_border),
                 );
                 let pointer_angle = -135.0f32.to_radians()
                     + 270.0f32.to_radians() * (knob as f32 / 100.0);
@@ -419,11 +520,25 @@ impl SmcApp {
 
             let thumb_centre = map.point(slot_x + 7.5, fill_top);
             let thumb = Rect::from_center_size(thumb_centre, map.size(vec2(74.0, 32.0)));
-            painter.rect_filled(thumb, map.radius(6.0), palette.card_hover);
+            let fader_hovered = interactive
+                && ui.ctx()
+                    .pointer_hover_pos()
+                    .is_some_and(|pos| thumb.contains(pos));
+            let thumb_fill = if fader_hovered {
+                blend(palette.card_hover, palette.accent, 0.25)
+            } else {
+                palette.card_hover
+            };
+            let thumb_border = if fader_hovered {
+                palette.accent
+            } else {
+                palette.border
+            };
+            painter.rect_filled(thumb, map.radius(6.0), thumb_fill);
             painter.rect_stroke(
                 thumb,
                 map.radius(6.0),
-                Stroke::new((1.5 * scale).max(1.0), palette.border),
+                Stroke::new((1.5 * scale).max(1.0), thumb_border),
                 StrokeKind::Inside,
             );
             let value_text = format!("{fader}%");
@@ -1823,6 +1938,11 @@ fn draw_card_slider(
         FontId::proportional(11.0),
         palette.text,
     );
+}
+
+fn blend(a: Color32, b: Color32, t: f32) -> Color32 {
+    let mix = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round() as u8;
+    Color32::from_rgb(mix(a.r(), b.r()), mix(a.g(), b.g()), mix(a.b(), b.b()))
 }
 
 fn card_button(
