@@ -1596,6 +1596,17 @@ impl SmcApp {
                         .size(label)
                         .color(palette.text),
                     );
+                    columns[1].horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 10.0 * map.scale;
+                        ui.hyperlink_to(
+                            RichText::new("GitHub").size(label).color(palette.accent),
+                            "https://github.com/DeSynkro",
+                        );
+                        ui.hyperlink_to(
+                            RichText::new("Codeberg").size(label).color(palette.accent),
+                            "https://codeberg.org/DeSynkro",
+                        );
+                    });
                     let time = ctx.input(|input| input.time) as f32;
                     let phase = (time / 1.6).fract();
                     let bump = |centre: f32, width: f32| {
@@ -1627,10 +1638,10 @@ impl SmcApp {
                             FontId::proportional(heart_size),
                             palette.red,
                         );
-                        ui.label(
-                            RichText::new("BY DESYNKRO")
-                                .size(label)
-                                .color(palette.dim),
+                        ui.label(RichText::new("BY").size(label).color(palette.dim));
+                        ui.hyperlink_to(
+                            RichText::new("DESYNKRO").size(label).color(palette.accent),
+                            "https://desynkro.com",
                         );
                     });
                     columns[1].add_space(12.0);
