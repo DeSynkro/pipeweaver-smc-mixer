@@ -31,29 +31,82 @@ fn device_key(name: &str) -> &str {
     }
 }
 
+fn is_smc(name: &str) -> bool {
+    name.contains("SMC-Mixer")
+}
+
+fn is_private(name: &str) -> bool {
+    is_smc(name) && name.contains("Private")
+}
+
+fn is_master(name: &str) -> bool {
+    is_smc(name) && name.contains("Master")
+}
+
 fn is_wired(name: &str) -> bool {
-    name.contains("SMC-Mixer") && (name.contains("Private") || name.contains("SINCO"))
+    is_smc(name) && (name.contains("Private") || name.contains("SINCO"))
 }
 
 fn is_bluetooth(name: &str) -> bool {
-    name.contains("SMC-Mixer") && (name.contains("Bluetooth") || name.contains("bluez"))
+    is_smc(name) && (name.contains("Bluetooth") || name.contains("bluez"))
 }
 
 fn choose_index(names: &[String], mode: MidiMode, wanted: &str) -> Option<usize> {
     let pick = |predicate: &dyn Fn(&str) -> bool| names.iter().position(|name| predicate(name));
 
     match mode {
-        MidiMode::Wired => pick(&is_wired),
+        MidiMode::Wired => pick(&is_private).or_else(|| pick(&is_wired)),
         MidiMode::Bluetooth => pick(&is_bluetooth),
-        MidiMode::Auto => pick(&is_wired)
+        MidiMode::Auto => pick(&is_private)
+            .or_else(|| pick(&is_wired))
             .or_else(|| pick(&is_bluetooth))
-            .or_else(|| pick(&|name| name.contains("SMC-Mixer") && !name.contains("Master")))
+            .or_else(|| pick(&|name| is_smc(name) && !name.contains("Master")))
             .or_else(|| {
                 (!wanted.is_empty())
                     .then(|| pick(&|name| device_key(name) == wanted))
                     .flatten()
             }),
     }
+}
+
+fn push_matching(candidates: &mut Vec<usize>, names: &[String], predicate: &dyn Fn(&str) -> bool) {
+    for (index, name) in names.iter().enumerate() {
+        if predicate(name) && !candidates.contains(&index) {
+            candidates.push(index);
+        }
+    }
+}
+
+/// The SMC-Mixer exposes the control surface on `Private` and the LED/DAW
+/// feedback side on `Master`. Try `Master` first for output, then fall back to
+/// `Private` or any SMC port for devices that use one bidirectional port.
+fn output_candidates(names: &[String], mode: MidiMode, wanted: &str) -> Vec<usize> {
+    let mut candidates = Vec::new();
+
+    match mode {
+        MidiMode::Wired => {
+            push_matching(&mut candidates, names, &|name| is_master(name));
+            push_matching(&mut candidates, names, &|name| is_private(name));
+            push_matching(&mut candidates, names, &|name| is_smc(name));
+        }
+        MidiMode::Bluetooth => {
+            push_matching(&mut candidates, names, &|name| is_bluetooth(name));
+            push_matching(&mut candidates, names, &|name| is_smc(name));
+        }
+        MidiMode::Auto => {
+            push_matching(&mut candidates, names, &|name| is_master(name));
+            push_matching(&mut candidates, names, &|name| is_private(name));
+            push_matching(&mut candidates, names, &|name| is_bluetooth(name));
+            push_matching(&mut candidates, names, &|name| {
+                is_smc(name) && !name.contains("Private")
+            });
+            if !wanted.is_empty() {
+                push_matching(&mut candidates, names, &|name| device_key(name) == wanted);
+            }
+        }
+    }
+
+    candidates
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -149,12 +202,32 @@ where
 }
 
 fn open_output(config: &Config) -> Option<MidiOutputConnection> {
-    let output = MidiOutput::new("pipeweaver-smc-mixer").ok()?;
-    let ports = output_ports(&output);
+    let probe = MidiOutput::new("pipeweaver-smc-mixer").ok()?;
+    let ports = output_ports(&probe);
     let names: Vec<String> = ports.iter().map(|(_, name)| name.clone()).collect();
-    let index = choose_index(&names, config.midi_mode, &config.midi_device)?;
-    let (port, _) = ports[index].clone();
-    output.connect(&port, "pipeweaver-smc-mixer").ok()
+    let candidates = output_candidates(&names, config.midi_mode, &config.midi_device);
+    drop(probe);
+
+    for index in candidates {
+        let wanted = names[index].clone();
+        // `MidiOutput::connect` consumes the output, so each candidate needs a
+        // fresh client. Match by name because the port handles belong to the
+        // probe client that was just dropped.
+        let output = MidiOutput::new("pipeweaver-smc-mixer").ok()?;
+        let ports = output_ports(&output);
+        let Some((port, name)) = ports.into_iter().find(|(_, name)| *name == wanted) else {
+            continue;
+        };
+        match output.connect(&port, "pipeweaver-smc-mixer") {
+            Ok(connection) => {
+                log::info!("MIDI output connected: {name}");
+                return Some(connection);
+            }
+            Err(error) => log::warn!("MIDI output {name} failed: {error}"),
+        }
+    }
+
+    None
 }
 
 pub fn run_controls(
@@ -273,9 +346,8 @@ pub fn run_controls(
         };
 
         let mut output = open_output(&config);
-        match &output {
-            Some(_) => log::info!("MIDI output connected"),
-            None => log::warn!("MIDI output: SMC-Mixer port not available"),
+        if output.is_none() {
+            log::warn!("MIDI output: SMC-Mixer port not available");
         }
         log::info!("MIDI control connected: {} ({:?})", port.name, port.link);
 
@@ -722,7 +794,12 @@ fn startup_pattern(elapsed_ms: u64) -> Option<[u8; 32]> {
 
 #[cfg(test)]
 mod tests {
-    use super::device_key;
+    use super::{choose_index, device_key, output_candidates};
+    use pipeweaver_smc_core::config::MidiMode;
+
+    fn names(list: &[&str]) -> Vec<String> {
+        list.iter().map(|name| name.to_string()).collect()
+    }
 
     #[test]
     fn strips_alsa_suffix() {
@@ -734,5 +811,21 @@ mod tests {
             device_key("SMC-Mixer:SMC-Mixer Bluetooth 128:1"),
             "SMC-Mixer:SMC-Mixer Bluetooth"
         );
+    }
+
+    #[test]
+    fn input_prefers_private_and_output_tries_master_first() {
+        let ports = names(&[
+            "SINCO:SINCO SMC-Mixer-Master 44:1",
+            "SINCO:SINCO SMC-Mixer-Private 44:0",
+        ]);
+        assert_eq!(choose_index(&ports, MidiMode::Auto, ""), Some(1));
+        assert_eq!(output_candidates(&ports, MidiMode::Auto, ""), vec![0, 1]);
+    }
+
+    #[test]
+    fn output_falls_back_to_a_single_bidirectional_port() {
+        let ports = names(&["SINCO:SINCO SMC-Mixer 44:0"]);
+        assert_eq!(output_candidates(&ports, MidiMode::Wired, ""), vec![0]);
     }
 }

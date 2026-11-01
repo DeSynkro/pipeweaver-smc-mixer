@@ -16,6 +16,7 @@
 *.swp
 *~
 .DS_Store
+.directory
 
 # Original high-res wordmark kept locally; the README uses logo.webp
 /res/logos/logo.png
