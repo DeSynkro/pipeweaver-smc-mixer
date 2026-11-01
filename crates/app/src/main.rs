@@ -96,6 +96,7 @@ async fn main() -> Result<()> {
     }
     let swap = Arc::new(AtomicU8::new(0));
     let pickup = Arc::new(AtomicBool::new(initial.pickup));
+    let ui_commands = command_tx.clone();
     {
         let config = initial.clone();
         let engine = engine.clone();
@@ -119,6 +120,7 @@ async fn main() -> Result<()> {
             let midi_link = midi_link.clone();
             let swap = swap.clone();
             let pickup = pickup.clone();
+            let ui_commands = ui_commands.clone();
 
             eframe::run_native(
                 theme::APP_NAME,
@@ -139,6 +141,7 @@ async fn main() -> Result<()> {
                         midi_link,
                         swap,
                         pickup,
+                        ui_commands,
                     )))
                 }),
             )?;

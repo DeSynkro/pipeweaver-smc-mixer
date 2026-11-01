@@ -50,6 +50,7 @@ impl Default for Channel {
 pub struct Snapshot {
     pub connected: bool,
     pub channels: Vec<Channel>,
+    pub off_surface: Vec<Channel>,
 }
 
 impl Default for Snapshot {
@@ -57,6 +58,7 @@ impl Default for Snapshot {
         Self {
             connected: false,
             channels: vec![Channel::default(); STRIP_COUNT],
+            off_surface: Vec::new(),
         }
     }
 }
@@ -131,9 +133,32 @@ fn build(status: &DaemonStatus, source_slots: usize) -> Snapshot {
         channels.push(channel);
     }
 
+    let assigned: HashSet<Ulid> = channels
+        .iter()
+        .filter(|channel| channel.assigned)
+        .map(|channel| channel.id)
+        .collect();
+
+    let mut off_surface = Vec::new();
+    for id in &sources {
+        if !assigned.contains(id) {
+            if let Some(channel) = source_channel(status, *id) {
+                off_surface.push(channel);
+            }
+        }
+    }
+    for id in &targets {
+        if !assigned.contains(id) {
+            if let Some(channel) = target_channel(status, *id) {
+                off_surface.push(channel);
+            }
+        }
+    }
+
     Snapshot {
         connected: true,
         channels,
+        off_surface,
     }
 }
 

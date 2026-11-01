@@ -5,7 +5,10 @@ use egui::{
     StrokeKind, UiBuilder, Vec2, ViewportCommand, pos2, vec2,
 };
 use pipeweaver_smc_core::config::Config;
-use pipeweaver_smc_core::{ChannelKind, Engine, Snapshot, STRIP_COUNT};
+use pipeweaver_ipc::commands::{APICommand, DaemonRequest};
+use pipeweaver_shared::{Mix, MuteState, MuteTarget};
+use pipeweaver_smc_core::{Channel, ChannelKind, Engine, Snapshot, STRIP_COUNT};
+use tokio::sync::mpsc::Sender;
 use crate::midi::Link;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -52,6 +55,9 @@ pub struct SmcApp {
     midi_net: Arc<AtomicU8>,
     swap: Arc<AtomicU8>,
     pickup_net: Arc<AtomicBool>,
+    commands: Sender<DaemonRequest>,
+    drawer_open: bool,
+    drawer_t: f32,
     window_width: f32,
     restore_width: f32,
     restore_pos: Option<egui::Pos2>,
@@ -75,6 +81,7 @@ impl SmcApp {
         midi_net: Arc<AtomicU8>,
         swap: Arc<AtomicU8>,
         pickup_net: Arc<AtomicBool>,
+        commands: Sender<DaemonRequest>,
     ) -> Self {
         let window_width = config.window_width();
         Self {
@@ -90,6 +97,9 @@ impl SmcApp {
             midi_net,
             swap,
             pickup_net,
+            commands,
+            drawer_open: false,
+            drawer_t: 0.0,
             window_width,
             restore_width: window_width,
             restore_pos: None,
@@ -819,6 +829,117 @@ impl SmcApp {
         }
     }
 
+    fn paint_drawer(&mut self, ui: &mut egui::Ui, snapshot: &Snapshot) {
+        let palette = theme::palette(self.config.light_panel);
+        let sources = snapshot
+            .off_surface
+            .iter()
+            .filter(|channel| channel.kind == ChannelKind::Source)
+            .count();
+        let targets = snapshot.off_surface.len() - sources;
+
+        if snapshot.off_surface.is_empty() {
+            self.drawer_open = false;
+            self.drawer_t = 0.0;
+            return;
+        }
+
+        let target = if self.drawer_open { 1.0 } else { 0.0 };
+        self.drawer_t += (target - self.drawer_t) * 0.3;
+        if (target - self.drawer_t).abs() < 0.01 {
+            self.drawer_t = target;
+        }
+        let t = self.drawer_t;
+
+        let screen = ui.max_rect();
+        let tab = Rect::from_center_size(
+            pos2(screen.center().x, screen.bottom() - 14.0),
+            vec2(360.0, 22.0),
+        );
+        let tab_response = ui.interact(tab, Id::unique(("off-surface-tab",)), Sense::click());
+        let painter = ui.painter();
+        painter.rect_filled(tab, egui::CornerRadius::same(8), palette.card);
+        painter.rect_stroke(
+            tab,
+            egui::CornerRadius::same(8),
+            Stroke::new(1.0, palette.border),
+            StrokeKind::Inside,
+        );
+        let source_word = if sources == 1 { "source" } else { "sources" };
+        let target_word = if targets == 1 { "target" } else { "targets" };
+        painter.text(
+            tab.center(),
+            Align2::CENTER_CENTER,
+            format!("OFF SURFACE · {sources} {source_word} · {targets} {target_word}"),
+            FontId::proportional(10.0),
+            palette.text,
+        );
+        if tab_response.clicked() {
+            self.drawer_open = !self.drawer_open;
+        }
+
+        if t <= 0.01 {
+            return;
+        }
+
+        let bottom = screen.bottom() - 28.0;
+        let top = bottom - 320.0 * t;
+        let drawer = Rect::from_min_max(
+            pos2(screen.left() + 10.0, top),
+            pos2(screen.right() - 10.0, bottom),
+        );
+        let painter = ui.painter();
+        painter.rect_filled(drawer, egui::CornerRadius::same(18), palette.panel);
+        painter.rect_stroke(
+            drawer,
+            egui::CornerRadius::same(18),
+            Stroke::new(1.5, palette.border),
+            StrokeKind::Inside,
+        );
+        painter.text(
+            pos2(screen.left() + 34.0, top + 24.0),
+            Align2::LEFT_CENTER,
+            "Off surface",
+            FontId::proportional(18.0),
+            palette.text,
+        );
+        painter.text(
+            pos2(screen.left() + 34.0, top + 46.0),
+            Align2::LEFT_CENTER,
+            "Channels not on the eight strips. Mouse control only.",
+            FontId::proportional(10.5),
+            palette.dim,
+        );
+
+        let inner = Rect::from_min_max(
+            pos2(screen.left() + 34.0, top + 60.0),
+            pos2(screen.right() - 34.0, bottom - 10.0),
+        );
+        let commands = &self.commands;
+        let engine = &self.engine;
+        ui.scope_builder(
+            UiBuilder::new().max_rect(inner).layout(Layout::top_down(Align::LEFT)),
+            |ui| {
+                ui.spacing_mut().item_spacing = vec2(10.0, 6.0);
+                egui::ScrollArea::horizontal()
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        ui.horizontal_top(|ui| {
+                            for channel in &snapshot.off_surface {
+                                draw_card(
+                                    ui,
+                                    channel,
+                                    palette,
+                                    commands,
+                                    engine.meter(channel.id),
+                                );
+                            }
+                        });
+                    });
+            },
+        );
+    }
+
     fn paint_grip(
         &mut self,
         ui: &mut egui::Ui,
@@ -953,7 +1074,143 @@ impl eframe::App for SmcApp {
                     self.paint_config(ui, &map, &ctx, monitor);
                 }
                 self.paint_nav(ui, &map);
+                self.paint_drawer(ui, &snapshot);
                 self.paint_grip(ui, &map, &ctx, monitor);
             });
     }
+}
+
+fn draw_card(
+    ui: &mut egui::Ui,
+    channel: &Channel,
+    palette: &theme::Palette,
+    commands: &Sender<DaemonRequest>,
+    meter: u8,
+) {
+    let (rect, _) = ui.allocate_exact_size(vec2(240.0, 210.0), Sense::hover());
+    let painter = ui.painter();
+    painter.rect_filled(rect, egui::CornerRadius::same(10), palette.card);
+    painter.rect_stroke(
+        rect,
+        egui::CornerRadius::same(10),
+        Stroke::new(1.0, palette.border),
+        StrokeKind::Inside,
+    );
+    let colour = Color32::from_rgb(channel.colour.0, channel.colour.1, channel.colour.2);
+    painter.rect_filled(
+        Rect::from_min_size(
+            pos2(rect.left() + 12.0, rect.bottom() - 7.0),
+            vec2(rect.width() - 24.0, 3.0),
+        ),
+        0,
+        colour,
+    );
+
+    let inner = rect.shrink(12.0);
+    ui.scope_builder(
+        UiBuilder::new().max_rect(inner).layout(Layout::top_down(Align::LEFT)),
+        |ui| {
+            ui.label(
+                RichText::new(&channel.name)
+                    .size(15.0)
+                    .strong()
+                    .color(palette.text),
+            );
+            ui.label(
+                RichText::new(if channel.kind == ChannelKind::Source {
+                    "SOURCE"
+                } else {
+                    "TARGET"
+                })
+                .size(9.0)
+                .color(palette.dim),
+            );
+            ui.add_space(4.0);
+
+            if channel.kind == ChannelKind::Source {
+                ui.label(RichText::new("Personal").size(10.0).color(palette.accent));
+                let mut personal = channel.fader;
+                if ui
+                    .add(egui::Slider::new(&mut personal, 0..=100).show_value(true))
+                    .changed()
+                {
+                    let _ = commands.try_send(DaemonRequest::Pipewire(
+                        APICommand::SetSourceVolume(channel.id, Mix::A, personal),
+                    ));
+                }
+                ui.label(RichText::new("Audience").size(10.0).color(palette.amber));
+                let mut audience = channel.knob;
+                if ui
+                    .add(egui::Slider::new(&mut audience, 0..=100).show_value(true))
+                    .changed()
+                {
+                    let _ = commands.try_send(DaemonRequest::Pipewire(
+                        APICommand::SetSourceVolume(channel.id, Mix::B, audience),
+                    ));
+                }
+                ui.horizontal(|ui| {
+                    if ui.selectable_label(channel.mute_a, "Mute A").clicked() {
+                        let command = if channel.mute_a {
+                            APICommand::DelSourceMuteTarget(channel.id, MuteTarget::TargetA)
+                        } else {
+                            APICommand::AddSourceMuteTarget(channel.id, MuteTarget::TargetA)
+                        };
+                        let _ = commands.try_send(DaemonRequest::Pipewire(command));
+                    }
+                    if ui.selectable_label(channel.mute_b, "Mute B").clicked() {
+                        let command = if channel.mute_b {
+                            APICommand::DelSourceMuteTarget(channel.id, MuteTarget::TargetB)
+                        } else {
+                            APICommand::AddSourceMuteTarget(channel.id, MuteTarget::TargetB)
+                        };
+                        let _ = commands.try_send(DaemonRequest::Pipewire(command));
+                    }
+                });
+            } else {
+                let mut volume = channel.fader;
+                if ui
+                    .add(egui::Slider::new(&mut volume, 0..=100).show_value(true))
+                    .changed()
+                {
+                    let _ = commands.try_send(DaemonRequest::Pipewire(
+                        APICommand::SetTargetVolume(channel.id, volume),
+                    ));
+                }
+                ui.horizontal(|ui| {
+                    if ui.selectable_label(channel.mute_a, "Mute").clicked() {
+                        let state = if channel.mute_a {
+                            MuteState::Unmuted
+                        } else {
+                            MuteState::Muted
+                        };
+                        let _ = commands.try_send(DaemonRequest::Pipewire(
+                            APICommand::SetTargetMuteState(channel.id, state),
+                        ));
+                    }
+                    if ui.selectable_label(!channel.mix_b, "A").clicked() {
+                        let _ = commands.try_send(DaemonRequest::Pipewire(
+                            APICommand::SetTargetMix(channel.id, Mix::A),
+                        ));
+                    }
+                    if ui.selectable_label(channel.mix_b, "B").clicked() {
+                        let _ = commands.try_send(DaemonRequest::Pipewire(
+                            APICommand::SetTargetMix(channel.id, Mix::B),
+                        ));
+                    }
+                });
+            }
+
+            ui.add_space(4.0);
+            ui.add(
+                egui::ProgressBar::new(meter as f32 / 100.0)
+                    .desired_width(ui.available_width())
+                    .text(format!("{meter}%"))
+                    .fill(if meter > 85 {
+                        palette.amber
+                    } else {
+                        palette.green
+                    }),
+            );
+        },
+    );
 }
