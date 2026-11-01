@@ -360,6 +360,24 @@ impl SmcApp {
                 painter.rect_filled(fill, map.radius(6.0), fader_colour);
             }
 
+            let meter = self.engine.meter(channel.id);
+            if meter > 0 {
+                let meter_height = 451.0 * meter.min(100) as f32 / 100.0;
+                let meter_rect = map.rect(Rect::from_min_size(
+                    pos2(base + 90.0, 801.0 - meter_height),
+                    vec2(4.0, meter_height),
+                ));
+                painter.rect_filled(
+                    meter_rect,
+                    map.radius(2.0),
+                    if meter > 85 {
+                        palette.amber
+                    } else {
+                        palette.green
+                    },
+                );
+            }
+
             let thumb_centre = map.point(slot_x + 7.5, fill_top);
             let thumb = Rect::from_center_size(thumb_centre, map.size(vec2(74.0, 32.0)));
             painter.rect_filled(thumb, map.radius(6.0), palette.card_hover);

@@ -1,4 +1,5 @@
 mod app;
+mod meters;
 mod midi;
 mod single_instance;
 mod theme;
@@ -81,7 +82,10 @@ async fn main() -> Result<()> {
             while let Ok(message) = broadcast_rx.recv().await {
                 match message {
                     BroadcastMessage::Online => engine.set_connected(true),
-                    BroadcastMessage::Offline => engine.set_connected(false),
+                    BroadcastMessage::Offline => {
+                        engine.set_connected(false);
+                        engine.clear_meters();
+                    }
                     BroadcastMessage::Status(status) => {
                         engine.set_connected(true);
                         engine.apply(&status, source_slots);
@@ -99,6 +103,7 @@ async fn main() -> Result<()> {
         let pickup = pickup.clone();
         std::thread::spawn(move || midi::run_controls(config, engine, command_tx, swap, pickup));
     }
+    tokio::spawn(meters::run(engine.clone()));
 
     while !stop.load(Ordering::Relaxed) {
         if ui_on.load(Ordering::Relaxed) {

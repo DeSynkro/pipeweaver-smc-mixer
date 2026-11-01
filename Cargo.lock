@@ -3670,6 +3670,7 @@ dependencies = [
  "egui",
  "egui_extras",
  "fs2",
+ "futures-util",
  "image",
  "ksni",
  "log",
@@ -3678,8 +3679,11 @@ dependencies = [
  "pipeweaver-shared",
  "pipeweaver-smc-core",
  "pipeweaver-websocket-client",
+ "serde",
+ "serde_json",
  "simplelog",
  "tokio",
+ "tokio-tungstenite",
  "ulid",
 ]
 

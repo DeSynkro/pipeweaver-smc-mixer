@@ -1,6 +1,6 @@
 use pipeweaver_ipc::commands::DaemonStatus;
 use pipeweaver_shared::{Mix, MuteState, MuteTarget, OrderGroup};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 use ulid::Ulid;
 
@@ -63,12 +63,14 @@ impl Default for Snapshot {
 
 pub struct Engine {
     snapshot: RwLock<Arc<Snapshot>>,
+    meters: RwLock<HashMap<Ulid, u8>>,
 }
 
 impl Engine {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             snapshot: RwLock::new(Arc::new(Snapshot::default())),
+            meters: RwLock::new(HashMap::new()),
         })
     }
 
@@ -88,6 +90,23 @@ impl Engine {
 
     pub fn apply(&self, status: &DaemonStatus, source_slots: usize) {
         *self.snapshot.write().unwrap() = Arc::new(build(status, source_slots));
+    }
+
+    pub fn set_meter(&self, id: Ulid, percent: u8) {
+        self.meters.write().unwrap().insert(id, percent);
+    }
+
+    pub fn meter(&self, id: Ulid) -> u8 {
+        self.meters
+            .read()
+            .unwrap()
+            .get(&id)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    pub fn clear_meters(&self) {
+        self.meters.write().unwrap().clear();
     }
 }
 
