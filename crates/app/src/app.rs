@@ -621,7 +621,7 @@ impl SmcApp {
                             format!("Mute the {} mix for this strip", labels[0]),
                         ),
                         1 => (
-                            "S",
+                            "A",
                             palette.red,
                             channel.mute_b,
                             format!("Mute the {} mix for this strip", labels[1]),
@@ -681,17 +681,22 @@ impl SmcApp {
                     ),
                     StrokeKind::Inside,
                 );
-                painter.text(
-                    rect.center(),
-                    Align2::CENTER_CENTER,
-                    label,
-                    FontId::proportional((20.0 * scale).max(11.0)),
-                    if active {
-                        on_colour(colour, palette)
-                    } else {
-                        palette.text
-                    },
-                );
+                let text_colour = if active {
+                    on_colour(colour, palette)
+                } else {
+                    palette.text
+                };
+                if is_source && slot == 3 {
+                    paint_link_icon(painter, rect, scale, text_colour);
+                } else {
+                    painter.text(
+                        rect.center(),
+                        Align2::CENTER_CENTER,
+                        label,
+                        FontId::proportional((20.0 * scale).max(11.0)),
+                        text_colour,
+                    );
+                }
 
                 if interactive && response.clicked() {
                     let request = if is_source {
@@ -2460,6 +2465,21 @@ fn on_colour(colour: Color32, palette: &theme::Palette) -> Color32 {
         palette.panel
     } else {
         palette.text
+    }
+}
+
+/// Two overlapping capsule outlines, used for the link button.
+fn paint_link_icon(painter: &egui::Painter, rect: Rect, scale: f32, colour: Color32) {
+    let stroke = Stroke::new((2.0 * scale).max(1.2), colour);
+    let height = (rect.height() * 0.26).max(8.0 * scale);
+    let width = (rect.width() * 0.38).max(12.0 * scale);
+    let overlap = (width * 0.28).max(2.0 * scale);
+    let offset = (width - overlap) * 0.5;
+    let radius = egui::CornerRadius::same((height * 0.5).round() as u8);
+    for direction in [-1.0, 1.0] {
+        let centre = rect.center() + vec2(direction * offset, 0.0);
+        let pill = Rect::from_center_size(centre, vec2(width, height));
+        painter.rect_stroke(pill, radius, stroke, StrokeKind::Inside);
     }
 }
 
