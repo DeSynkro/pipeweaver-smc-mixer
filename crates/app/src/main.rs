@@ -59,6 +59,37 @@ async fn main() -> Result<()> {
     });
     let tray_handle = tokio::spawn(tray::spawn(stop.clone(), tray_context.clone()));
 
+    #[cfg(unix)]
+    {
+        let stop = stop.clone();
+        let egui_ctx = tray_context.egui.clone();
+        tokio::spawn(async move {
+            use tokio::signal::unix::SignalKind;
+            tokio::select! {
+                _ = async {
+                    match tokio::signal::unix::signal(SignalKind::terminate()) {
+                        Ok(mut term) => {
+                            term.recv().await;
+                        }
+                        Err(_) => std::future::pending::<()>().await,
+                    }
+                } => {}
+                _ = async {
+                    match tokio::signal::unix::signal(SignalKind::interrupt()) {
+                        Ok(mut int) => {
+                            int.recv().await;
+                        }
+                        Err(_) => std::future::pending::<()>().await,
+                    }
+                } => {}
+            }
+            stop.store(true, Ordering::Relaxed);
+            if let Some(ctx) = egui_ctx.lock().unwrap().as_ref() {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+        });
+    }
+
     let midi_link = Arc::new(AtomicU8::new(midi::Link::Offline.code()));
     {
         let link = midi_link.clone();
@@ -133,7 +164,7 @@ async fn main() -> Result<()> {
     let last_midi = Arc::new(AtomicU64::new(0));
     let led_test = Arc::new(AtomicBool::new(false));
     let ui_commands = command_tx.clone();
-    {
+    let midi_handle = {
         let config = initial.clone();
         let engine = engine.clone();
         let swap = swap.clone();
@@ -147,6 +178,7 @@ async fn main() -> Result<()> {
         let midi_link = midi_link.clone();
         let midi_last_midi = last_midi.clone();
         let midi_led_test = led_test.clone();
+        let midi_stop = stop.clone();
         std::thread::spawn(move || {
             midi::run_controls(
                 config,
@@ -163,9 +195,10 @@ async fn main() -> Result<()> {
                 midi_link,
                 midi_last_midi,
                 midi_led_test,
+                midi_stop,
             )
-        });
-    }
+        })
+    };
     tokio::spawn(meters::run(engine.clone()));
 
     while !stop.load(Ordering::Relaxed) {
@@ -225,6 +258,7 @@ async fn main() -> Result<()> {
     }
 
     let _ = tray_handle.await;
+    let _ = midi_handle.join();
     log::info!("Stopped {}", theme::APP_NAME);
     Ok(())
 }

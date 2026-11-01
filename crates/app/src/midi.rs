@@ -172,11 +172,15 @@ pub fn run_controls(
     midi_link: Arc<AtomicU8>,
     last_midi: Arc<AtomicU64>,
     led_test: Arc<AtomicBool>,
+    stop: Arc<AtomicBool>,
 ) {
     let config_path = Config::path();
     let mut config = config;
 
     loop {
+        if stop.load(Ordering::Relaxed) {
+            return;
+        }
         let callback_engine = engine.clone();
         let callback_commands = commands.clone();
         let callback_swap = swap.clone();
@@ -277,6 +281,14 @@ pub fn run_controls(
         let mut last_check = Instant::now();
         let mut last_link = midi_link.load(Ordering::Relaxed);
         loop {
+            if stop.load(Ordering::Relaxed) {
+                if let Some(output) = output.as_mut() {
+                    for note in 0..32 {
+                        let _ = output.send(&[0x90, note, 0]);
+                    }
+                }
+                return;
+            }
             if led_test.swap(false, Ordering::Relaxed) {
                 test_frames = 10;
             }
