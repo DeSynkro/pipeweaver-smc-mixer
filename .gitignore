@@ -10,6 +10,7 @@
 /build/backups/
 /build/docker/cargo-cache/
 /build/docker/out/
+/build/release/
 
 # Personal project documents
 /docs

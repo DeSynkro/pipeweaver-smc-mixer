@@ -2661,20 +2661,23 @@ fn draw_tab(
     open: bool,
     palette: &theme::Palette,
 ) {
-    painter.rect_filled(tab, egui::CornerRadius::same(8), palette.card);
-    painter.rect_stroke(
-        tab,
-        egui::CornerRadius::same(8),
-        Stroke::new(1.0, palette.border),
-        StrokeKind::Inside,
-    );
+    let fill = Color32::from_rgb(0x2F, 0x37, 0x42);
+    let text = Color32::from_rgb(205, 211, 220);
+    let dim = Color32::from_rgb(120, 130, 143);
+    let radius = egui::CornerRadius {
+        nw: 8,
+        ne: 8,
+        sw: 0,
+        se: 0,
+    };
+    painter.rect_filled(tab, radius, fill);
     for offset in [-4.0, 0.0, 4.0] {
         painter.line_segment(
             [
                 pos2(tab.left() + 12.0, tab.center().y + offset),
                 pos2(tab.left() + 20.0, tab.center().y + offset),
             ],
-            Stroke::new(1.2, palette.dim),
+            Stroke::new(1.2, dim),
         );
     }
     painter.text(
@@ -2682,7 +2685,7 @@ fn draw_tab(
         Align2::CENTER_CENTER,
         label,
         font.clone(),
-        palette.text,
+        text,
     );
     let chevron = if open { 4.0 } else { -4.0 };
     painter.line_segment(
