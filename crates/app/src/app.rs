@@ -9,7 +9,9 @@ use pipeweaver_ipc::commands::{APICommand, DaemonRequest};
 use pipeweaver_shared::{Mix, MuteState, MuteTarget};
 use pipeweaver_smc_core::{Channel, ChannelKind, Engine, Snapshot, STRIP_COUNT};
 use tokio::sync::mpsc::Sender;
+use ulid::Ulid;
 use crate::midi::Link;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
@@ -58,6 +60,7 @@ pub struct SmcApp {
     commands: Sender<DaemonRequest>,
     drawer_open: bool,
     drawer_t: f32,
+    reversed: HashSet<Ulid>,
     window_width: f32,
     restore_width: f32,
     restore_pos: Option<egui::Pos2>,
@@ -100,6 +103,7 @@ impl SmcApp {
             commands,
             drawer_open: false,
             drawer_t: 0.0,
+            reversed: HashSet::new(),
             window_width,
             restore_width: window_width,
             restore_pos: None,
@@ -852,91 +856,100 @@ impl SmcApp {
         let t = self.drawer_t;
 
         let screen = ui.max_rect();
-        let tab = Rect::from_center_size(
-            pos2(screen.center().x, screen.bottom() - 14.0),
-            vec2(360.0, 22.0),
-        );
-        let tab_response = ui.interact(tab, Id::unique(("off-surface-tab",)), Sense::click());
-        let painter = ui.painter();
-        painter.rect_filled(tab, egui::CornerRadius::same(8), palette.card);
-        painter.rect_stroke(
-            tab,
-            egui::CornerRadius::same(8),
-            Stroke::new(1.0, palette.border),
-            StrokeKind::Inside,
-        );
         let source_word = if sources == 1 { "source" } else { "sources" };
         let target_word = if targets == 1 { "target" } else { "targets" };
-        painter.text(
-            tab.center(),
-            Align2::CENTER_CENTER,
-            format!("OFF SURFACE · {sources} {source_word} · {targets} {target_word}"),
-            FontId::proportional(10.0),
-            palette.text,
+        let label = format!("OFF SURFACE · {sources} {source_word} · {targets} {target_word}");
+        let font = FontId::proportional(10.0);
+        let text_width = ui
+            .painter()
+            .layout_no_wrap(label.clone(), font.clone(), palette.text)
+            .size()
+            .x;
+        let tab = Rect::from_center_size(
+            pos2(screen.center().x, screen.bottom() - 14.0),
+            vec2((text_width + 54.0).max(220.0), 22.0),
         );
+        let tab_response = ui.interact(tab, Id::unique(("off-surface-tab",)), Sense::click());
         if tab_response.clicked() {
             self.drawer_open = !self.drawer_open;
         }
 
-        if t <= 0.01 {
-            return;
+        if t > 0.01 {
+            let count = snapshot.off_surface.len() as f32;
+            let card_width = 180.0;
+            let gap = 10.0;
+            let padding = 24.0;
+            let content_width = count * card_width + (count - 1.0).max(0.0) * gap;
+            let drawer_width = (content_width + 2.0 * padding).clamp(300.0, screen.width() - 20.0);
+            let left = screen.center().x - drawer_width * 0.5;
+            let right = left + drawer_width;
+            let bottom = screen.bottom() - 28.0;
+            let top = bottom - 400.0 * t;
+            let drawer = Rect::from_min_max(pos2(left, top), pos2(right, bottom));
+            let painter = ui.painter().clone();
+            painter.rect_filled(drawer, egui::CornerRadius::same(18), palette.panel);
+            painter.rect_stroke(
+                drawer,
+                egui::CornerRadius::same(18),
+                Stroke::new(1.5, palette.border),
+                StrokeKind::Inside,
+            );
+            let header_painter = painter.with_clip_rect(drawer);
+            header_painter.text(
+                pos2(left + padding, top + 24.0),
+                Align2::LEFT_CENTER,
+                "Off surface",
+                FontId::proportional(18.0),
+                palette.text,
+            );
+            header_painter.text(
+                pos2(left + padding, top + 46.0),
+                Align2::LEFT_CENTER,
+                "Channels not on the eight strips. Mouse control only.",
+                FontId::proportional(10.5),
+                palette.dim,
+            );
+
+            let inner = Rect::from_min_max(
+                pos2(left + padding, top + 60.0),
+                pos2(right - padding, bottom - 12.0),
+            );
+            let commands = &self.commands;
+            let engine = &self.engine;
+            let reversed = &mut self.reversed;
+            ui.scope_builder(
+                UiBuilder::new().max_rect(inner).layout(Layout::top_down(Align::LEFT)),
+                |ui| {
+                    ui.set_clip_rect(inner);
+                    ui.spacing_mut().item_spacing = vec2(gap, 6.0);
+                    egui::ScrollArea::horizontal()
+                        .scroll_source(egui::scroll_area::ScrollSource::ALL)
+                        .auto_shrink([false, true])
+                        .show(ui, |ui| {
+                            ui.horizontal_top(|ui| {
+                                for channel in &snapshot.off_surface {
+                                    draw_card(
+                                        ui,
+                                        channel,
+                                        palette,
+                                        commands,
+                                        engine.meter(channel.id),
+                                        reversed,
+                                    );
+                                }
+                            });
+                        });
+                },
+            );
         }
 
-        let bottom = screen.bottom() - 28.0;
-        let top = bottom - 320.0 * t;
-        let drawer = Rect::from_min_max(
-            pos2(screen.left() + 10.0, top),
-            pos2(screen.right() - 10.0, bottom),
-        );
-        let painter = ui.painter();
-        painter.rect_filled(drawer, egui::CornerRadius::same(18), palette.panel);
-        painter.rect_stroke(
-            drawer,
-            egui::CornerRadius::same(18),
-            Stroke::new(1.5, palette.border),
-            StrokeKind::Inside,
-        );
-        painter.text(
-            pos2(screen.left() + 34.0, top + 24.0),
-            Align2::LEFT_CENTER,
-            "Off surface",
-            FontId::proportional(18.0),
-            palette.text,
-        );
-        painter.text(
-            pos2(screen.left() + 34.0, top + 46.0),
-            Align2::LEFT_CENTER,
-            "Channels not on the eight strips. Mouse control only.",
-            FontId::proportional(10.5),
-            palette.dim,
-        );
-
-        let inner = Rect::from_min_max(
-            pos2(screen.left() + 34.0, top + 60.0),
-            pos2(screen.right() - 34.0, bottom - 10.0),
-        );
-        let commands = &self.commands;
-        let engine = &self.engine;
-        ui.scope_builder(
-            UiBuilder::new().max_rect(inner).layout(Layout::top_down(Align::LEFT)),
-            |ui| {
-                ui.spacing_mut().item_spacing = vec2(10.0, 6.0);
-                egui::ScrollArea::horizontal()
-                    .auto_shrink([false, true])
-                    .show(ui, |ui| {
-                        ui.horizontal_top(|ui| {
-                            for channel in &snapshot.off_surface {
-                                draw_card(
-                                    ui,
-                                    channel,
-                                    palette,
-                                    commands,
-                                    engine.meter(channel.id),
-                                );
-                            }
-                        });
-                    });
-            },
+        draw_tab(
+            &ui.painter().clone(),
+            tab,
+            &label,
+            &font,
+            self.drawer_open,
+            palette,
         );
     }
 
@@ -1086,9 +1099,10 @@ fn draw_card(
     palette: &theme::Palette,
     commands: &Sender<DaemonRequest>,
     meter: u8,
+    reversed: &mut HashSet<Ulid>,
 ) {
-    let (rect, _) = ui.allocate_exact_size(vec2(240.0, 210.0), Sense::hover());
-    let painter = ui.painter();
+    let (rect, _) = ui.allocate_exact_size(vec2(180.0, 320.0), Sense::hover());
+    let painter = ui.painter().clone();
     painter.rect_filled(rect, egui::CornerRadius::same(10), palette.card);
     painter.rect_stroke(
         rect,
@@ -1097,120 +1111,441 @@ fn draw_card(
         StrokeKind::Inside,
     );
     let colour = Color32::from_rgb(channel.colour.0, channel.colour.1, channel.colour.2);
+
+    painter.text(
+        pos2(rect.center().x, rect.top() + 18.0),
+        Align2::CENTER_CENTER,
+        &channel.name,
+        FontId::proportional(15.0),
+        palette.text,
+    );
+    painter.text(
+        pos2(rect.center().x, rect.top() + 34.0),
+        Align2::CENTER_CENTER,
+        if channel.kind == ChannelKind::Source {
+            "SOURCE"
+        } else {
+            "TARGET"
+        },
+        FontId::proportional(9.0),
+        palette.dim,
+    );
     painter.rect_filled(
-        Rect::from_min_size(
-            pos2(rect.left() + 12.0, rect.bottom() - 7.0),
-            vec2(rect.width() - 24.0, 3.0),
-        ),
+        Rect::from_min_size(pos2(rect.left(), rect.top() + 44.0), vec2(rect.width(), 3.0)),
         0,
         colour,
     );
 
-    let inner = rect.shrink(12.0);
-    ui.scope_builder(
-        UiBuilder::new().max_rect(inner).layout(Layout::top_down(Align::LEFT)),
-        |ui| {
-            ui.label(
-                RichText::new(&channel.name)
-                    .size(15.0)
-                    .strong()
-                    .color(palette.text),
-            );
-            ui.label(
-                RichText::new(if channel.kind == ChannelKind::Source {
-                    "SOURCE"
-                } else {
-                    "TARGET"
-                })
-                .size(9.0)
-                .color(palette.dim),
-            );
-            ui.add_space(4.0);
+    if channel.kind == ChannelKind::Source {
+        let left_colour = if channel.mute_a {
+            palette.red
+        } else {
+            palette.accent
+        };
+        let right_colour = if channel.mute_b {
+            palette.red
+        } else {
+            palette.amber
+        };
+        draw_card_slider(
+            ui,
+            &painter,
+            channel,
+            palette,
+            commands,
+            rect,
+            0,
+            channel.fader,
+            "Personal",
+            left_colour,
+            false,
+            Mix::A,
+        );
+        draw_card_slider(
+            ui,
+            &painter,
+            channel,
+            palette,
+            commands,
+            rect,
+            1,
+            channel.knob,
+            "Audience",
+            right_colour,
+            false,
+            Mix::B,
+        );
 
-            if channel.kind == ChannelKind::Source {
-                ui.label(RichText::new("Personal").size(10.0).color(palette.accent));
-                let mut personal = channel.fader;
-                if ui
-                    .add(egui::Slider::new(&mut personal, 0..=100).show_value(true))
-                    .changed()
-                {
-                    let _ = commands.try_send(DaemonRequest::Pipewire(
-                        APICommand::SetSourceVolume(channel.id, Mix::A, personal),
-                    ));
-                }
-                ui.label(RichText::new("Audience").size(10.0).color(palette.amber));
-                let mut audience = channel.knob;
-                if ui
-                    .add(egui::Slider::new(&mut audience, 0..=100).show_value(true))
-                    .changed()
-                {
-                    let _ = commands.try_send(DaemonRequest::Pipewire(
-                        APICommand::SetSourceVolume(channel.id, Mix::B, audience),
-                    ));
-                }
-                ui.horizontal(|ui| {
-                    if ui.selectable_label(channel.mute_a, "Mute A").clicked() {
-                        let command = if channel.mute_a {
-                            APICommand::DelSourceMuteTarget(channel.id, MuteTarget::TargetA)
-                        } else {
-                            APICommand::AddSourceMuteTarget(channel.id, MuteTarget::TargetA)
-                        };
-                        let _ = commands.try_send(DaemonRequest::Pipewire(command));
-                    }
-                    if ui.selectable_label(channel.mute_b, "Mute B").clicked() {
-                        let command = if channel.mute_b {
-                            APICommand::DelSourceMuteTarget(channel.id, MuteTarget::TargetB)
-                        } else {
-                            APICommand::AddSourceMuteTarget(channel.id, MuteTarget::TargetB)
-                        };
-                        let _ = commands.try_send(DaemonRequest::Pipewire(command));
-                    }
-                });
+        let link = Rect::from_center_size(pos2(rect.center().x, rect.top() + 150.0), vec2(20.0, 18.0));
+        let reverse = Rect::from_center_size(pos2(rect.center().x, rect.top() + 178.0), vec2(20.0, 18.0));
+        if link_button(
+            ui,
+            &painter,
+            link,
+            channel.linked,
+            palette,
+            Id::unique(("card-link", channel.id)),
+        ) {
+            let _ = commands.try_send(DaemonRequest::Pipewire(
+                APICommand::SetSourceVolumeLinked(channel.id, !channel.linked),
+            ));
+        }
+        let is_reversed = reversed.contains(&channel.id);
+        if card_button(
+            ui,
+            &painter,
+            reverse,
+            "R",
+            is_reversed,
+            palette.accent,
+            palette,
+            Id::unique(("card-reverse", channel.id)),
+        ) {
+            if is_reversed {
+                reversed.remove(&channel.id);
             } else {
-                let mut volume = channel.fader;
-                if ui
-                    .add(egui::Slider::new(&mut volume, 0..=100).show_value(true))
-                    .changed()
-                {
-                    let _ = commands.try_send(DaemonRequest::Pipewire(
-                        APICommand::SetTargetVolume(channel.id, volume),
-                    ));
-                }
-                ui.horizontal(|ui| {
-                    if ui.selectable_label(channel.mute_a, "Mute").clicked() {
-                        let state = if channel.mute_a {
-                            MuteState::Unmuted
-                        } else {
-                            MuteState::Muted
-                        };
-                        let _ = commands.try_send(DaemonRequest::Pipewire(
-                            APICommand::SetTargetMuteState(channel.id, state),
-                        ));
-                    }
-                    if ui.selectable_label(!channel.mix_b, "A").clicked() {
-                        let _ = commands.try_send(DaemonRequest::Pipewire(
-                            APICommand::SetTargetMix(channel.id, Mix::A),
-                        ));
-                    }
-                    if ui.selectable_label(channel.mix_b, "B").clicked() {
-                        let _ = commands.try_send(DaemonRequest::Pipewire(
-                            APICommand::SetTargetMix(channel.id, Mix::B),
-                        ));
-                    }
-                });
+                reversed.insert(channel.id);
             }
+            let _ = commands.try_send(DaemonRequest::Pipewire(
+                APICommand::SetSourceVolume(channel.id, Mix::A, channel.knob),
+            ));
+            let _ = commands.try_send(DaemonRequest::Pipewire(
+                APICommand::SetSourceVolume(channel.id, Mix::B, channel.fader),
+            ));
+        }
 
-            ui.add_space(4.0);
-            ui.add(
-                egui::ProgressBar::new(meter as f32 / 100.0)
-                    .desired_width(ui.available_width())
-                    .text(format!("{meter}%"))
-                    .fill(if meter > 85 {
-                        palette.amber
-                    } else {
-                        palette.green
-                    }),
-            );
-        },
+        let y = rect.top() + 300.0;
+        let mute_a = Rect::from_center_size(pos2(rect.left() + 48.0, y), vec2(72.0, 18.0));
+        let mute_b = Rect::from_center_size(pos2(rect.left() + 132.0, y), vec2(72.0, 18.0));
+        if card_button(
+            ui,
+            &painter,
+            mute_a,
+            "Mute A",
+            channel.mute_a,
+            palette.red,
+            palette,
+            Id::unique(("card-mute-a", channel.id)),
+        ) {
+            let command = if channel.mute_a {
+                APICommand::DelSourceMuteTarget(channel.id, MuteTarget::TargetA)
+            } else {
+                APICommand::AddSourceMuteTarget(channel.id, MuteTarget::TargetA)
+            };
+            let _ = commands.try_send(DaemonRequest::Pipewire(command));
+        }
+        if card_button(
+            ui,
+            &painter,
+            mute_b,
+            "Mute B",
+            channel.mute_b,
+            palette.red,
+            palette,
+            Id::unique(("card-mute-b", channel.id)),
+        ) {
+            let command = if channel.mute_b {
+                APICommand::DelSourceMuteTarget(channel.id, MuteTarget::TargetB)
+            } else {
+                APICommand::AddSourceMuteTarget(channel.id, MuteTarget::TargetB)
+            };
+            let _ = commands.try_send(DaemonRequest::Pipewire(command));
+        }
+    } else {
+        let mix_colour = if channel.mute_a {
+            palette.red
+        } else if channel.mix_b {
+            palette.amber
+        } else {
+            palette.accent
+        };
+        draw_card_slider(
+            ui,
+            &painter,
+            channel,
+            palette,
+            commands,
+            rect,
+            0,
+            channel.fader,
+            if channel.mix_b { "Audience" } else { "Personal" },
+            mix_colour,
+            true,
+            Mix::A,
+        );
+
+        let y = rect.top() + 300.0;
+        let mute = Rect::from_center_size(pos2(rect.center().x - 38.0, y), vec2(70.0, 18.0));
+        let a = Rect::from_center_size(pos2(rect.center().x + 22.0, y), vec2(28.0, 18.0));
+        let b = Rect::from_center_size(pos2(rect.center().x + 56.0, y), vec2(28.0, 18.0));
+        if card_button(
+            ui,
+            &painter,
+            mute,
+            "Mute",
+            channel.mute_a,
+            palette.red,
+            palette,
+            Id::unique(("card-mute", channel.id)),
+        ) {
+            let state = if channel.mute_a {
+                MuteState::Unmuted
+            } else {
+                MuteState::Muted
+            };
+            let _ = commands.try_send(DaemonRequest::Pipewire(
+                APICommand::SetTargetMuteState(channel.id, state),
+            ));
+        }
+        if card_button(
+            ui,
+            &painter,
+            a,
+            "A",
+            !channel.mix_b,
+            palette.accent,
+            palette,
+            Id::unique(("card-mix-a", channel.id)),
+        ) {
+            let _ = commands.try_send(DaemonRequest::Pipewire(
+                APICommand::SetTargetMix(channel.id, Mix::A),
+            ));
+        }
+        if card_button(
+            ui,
+            &painter,
+            b,
+            "B",
+            channel.mix_b,
+            palette.amber,
+            palette,
+            Id::unique(("card-mix-b", channel.id)),
+        ) {
+            let _ = commands.try_send(DaemonRequest::Pipewire(
+                APICommand::SetTargetMix(channel.id, Mix::B),
+            ));
+        }
+    }
+
+    let meter_rect = Rect::from_min_size(
+        pos2(rect.left() + 14.0, rect.bottom() - 6.0),
+        vec2(rect.width() - 28.0, 3.0),
+    );
+    painter.rect_filled(meter_rect, egui::CornerRadius::same(2), palette.field);
+    let fill_width = meter_rect.width() * meter.min(100) as f32 / 100.0;
+    if fill_width > 0.0 {
+        painter.rect_filled(
+            Rect::from_min_size(meter_rect.min, vec2(fill_width, 3.0)),
+            egui::CornerRadius::same(2),
+            if meter > 85 {
+                palette.amber
+            } else {
+                palette.green
+            },
+        );
+    }
+}
+
+fn draw_card_slider(
+    ui: &mut egui::Ui,
+    painter: &egui::Painter,
+    channel: &Channel,
+    palette: &theme::Palette,
+    commands: &Sender<DaemonRequest>,
+    card: Rect,
+    column: usize,
+    value: u8,
+    label: &str,
+    colour: Color32,
+    target: bool,
+    mix: Mix,
+) {
+    let cx = if target {
+        card.center().x
+    } else {
+        card.left() + if column == 0 { 48.0 } else { 132.0 }
+    };
+    let top = card.top() + 78.0;
+    let bottom = card.top() + 262.0;
+    let mut value = value;
+
+    let hit = Rect::from_center_size(
+        pos2(cx, (top + bottom) * 0.5),
+        vec2(44.0, bottom - top),
+    );
+    let response = ui.interact(
+        hit,
+        Id::unique(("off-slider", channel.id, column)),
+        Sense::click_and_drag(),
+    );
+    if response.dragged() || response.clicked() {
+        if let Some(pos) = ui.ctx().input(|input| input.pointer.interact_pos()) {
+            let next = (((bottom - pos.y) / (bottom - top)) * 100.0)
+                .clamp(0.0, 100.0)
+                .round() as u8;
+            if next != value {
+                value = next;
+                let request = if target {
+                    DaemonRequest::Pipewire(APICommand::SetTargetVolume(channel.id, next))
+                } else {
+                    DaemonRequest::Pipewire(APICommand::SetSourceVolume(
+                        channel.id,
+                        mix,
+                        next,
+                    ))
+                };
+                let _ = commands.try_send(request);
+            }
+        }
+    }
+
+    let value_y = bottom - (bottom - top) * value as f32 / 100.0;
+    painter.text(
+        pos2(cx, card.top() + 62.0),
+        Align2::CENTER_CENTER,
+        label,
+        FontId::proportional(9.0),
+        colour,
+    );
+    painter.rect_filled(
+        Rect::from_center_size(pos2(cx, (top + bottom) * 0.5), vec2(4.0, bottom - top)),
+        egui::CornerRadius::same(2),
+        palette.field,
+    );
+    if value > 0 {
+        painter.rect_filled(
+            Rect::from_center_size(
+                pos2(cx, (value_y + bottom) * 0.5),
+                vec2(4.0, bottom - value_y),
+            ),
+            egui::CornerRadius::same(2),
+            colour,
+        );
+    }
+    painter.circle_filled(pos2(cx, value_y), 7.0, colour);
+    painter.circle_filled(pos2(cx, value_y), 3.0, palette.card);
+    painter.text(
+        pos2(cx, card.top() + 276.5),
+        Align2::CENTER_CENTER,
+        format!("{value}%"),
+        FontId::proportional(11.0),
+        palette.text,
+    );
+}
+
+fn card_button(
+    ui: &mut egui::Ui,
+    painter: &egui::Painter,
+    rect: Rect,
+    label: &str,
+    active: bool,
+    active_colour: Color32,
+    palette: &theme::Palette,
+    id: Id,
+) -> bool {
+    let response = ui.interact(rect, id, Sense::click());
+    let fill = if active {
+        active_colour.gamma_multiply(0.3)
+    } else {
+        palette.card_hover
+    };
+    painter.rect_filled(rect, egui::CornerRadius::same(5), fill);
+    painter.rect_stroke(
+        rect,
+        egui::CornerRadius::same(5),
+        Stroke::new(1.0, if active { active_colour } else { palette.border }),
+        StrokeKind::Inside,
+    );
+    painter.text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        label,
+        FontId::proportional(9.0),
+        if active { active_colour } else { palette.text },
+    );
+    response.clicked()
+}
+
+fn link_button(
+    ui: &mut egui::Ui,
+    painter: &egui::Painter,
+    rect: Rect,
+    active: bool,
+    palette: &theme::Palette,
+    id: Id,
+) -> bool {
+    let response = ui.interact(rect, id, Sense::click());
+    let colour = if active { palette.green } else { palette.text };
+    let fill = if active {
+        palette.green.gamma_multiply(0.3)
+    } else {
+        palette.card_hover
+    };
+    painter.rect_filled(rect, egui::CornerRadius::same(5), fill);
+    painter.rect_stroke(
+        rect,
+        egui::CornerRadius::same(5),
+        Stroke::new(1.0, if active { palette.green } else { palette.border }),
+        StrokeKind::Inside,
+    );
+    let centre = rect.center();
+    painter.circle_stroke(
+        pos2(centre.x - 3.5, centre.y),
+        3.5,
+        Stroke::new(1.4, colour),
+    );
+    painter.circle_stroke(
+        pos2(centre.x + 3.5, centre.y),
+        3.5,
+        Stroke::new(1.4, colour),
+    );
+    response.clicked()
+}
+
+fn draw_tab(
+    painter: &egui::Painter,
+    tab: Rect,
+    label: &str,
+    font: &FontId,
+    open: bool,
+    palette: &theme::Palette,
+) {
+    painter.rect_filled(tab, egui::CornerRadius::same(8), palette.card);
+    painter.rect_stroke(
+        tab,
+        egui::CornerRadius::same(8),
+        Stroke::new(1.0, palette.border),
+        StrokeKind::Inside,
+    );
+    for offset in [-4.0, 0.0, 4.0] {
+        painter.line_segment(
+            [
+                pos2(tab.left() + 12.0, tab.center().y + offset),
+                pos2(tab.left() + 20.0, tab.center().y + offset),
+            ],
+            Stroke::new(1.2, palette.dim),
+        );
+    }
+    painter.text(
+        tab.center(),
+        Align2::CENTER_CENTER,
+        label,
+        font.clone(),
+        palette.text,
+    );
+    let chevron = if open { 4.0 } else { -4.0 };
+    painter.line_segment(
+        [
+            pos2(tab.right() - 18.0, tab.center().y - chevron),
+            pos2(tab.right() - 13.0, tab.center().y + chevron),
+        ],
+        Stroke::new(1.5, palette.accent),
+    );
+    painter.line_segment(
+        [
+            pos2(tab.right() - 13.0, tab.center().y + chevron),
+            pos2(tab.right() - 8.0, tab.center().y - chevron),
+        ],
+        Stroke::new(1.5, palette.accent),
     );
 }
