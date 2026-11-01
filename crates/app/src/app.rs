@@ -1,0 +1,616 @@
+use crate::theme::{self, Map};
+use eframe::egui;
+use egui::{
+    Align, Align2, Color32, Context, FontId, Id, Layout, Rect, RichText, Sense, Stroke,
+    StrokeKind, UiBuilder, ViewportCommand, pos2, vec2,
+};
+use pipeweaver_smc_core::config::Config;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Screen {
+    Mixer,
+    Config,
+}
+
+fn monitor_rect(frame: &eframe::Frame) -> Option<Rect> {
+    let window = frame.winit_window()?;
+    let monitor = window.current_monitor()?;
+    let scale = monitor.scale_factor();
+    let position = monitor.position().to_logical::<f32>(scale);
+    let size = monitor.size().to_logical::<f32>(scale);
+    Some(Rect::from_min_size(
+        pos2(position.x, position.y),
+        vec2(size.width, size.height),
+    ))
+}
+
+fn clamp_to_monitor(pos: egui::Pos2, size: egui::Vec2, monitor: Rect) -> egui::Pos2 {
+    pos2(
+        pos.x
+            .clamp(monitor.min.x, (monitor.max.x - size.x).max(monitor.min.x)),
+        pos.y
+            .clamp(monitor.min.y, (monitor.max.y - size.y).max(monitor.min.y)),
+    )
+}
+
+pub struct SmcApp {
+    stop: Arc<AtomicBool>,
+    ui_on: Arc<AtomicBool>,
+    focus: Arc<AtomicBool>,
+    config: Config,
+    config_path: PathBuf,
+    screen: Screen,
+    window_width: f32,
+    restore_width: f32,
+    restore_pos: Option<egui::Pos2>,
+    maximized: bool,
+    resizing: bool,
+    resize_start: f32,
+    resize_pointer: Option<f32>,
+    enable_resize_at: Option<Instant>,
+    pending_move: Option<(egui::Pos2, f32, Instant)>,
+}
+
+impl SmcApp {
+    pub fn new(
+        config: Config,
+        config_path: PathBuf,
+        stop: Arc<AtomicBool>,
+        ui_on: Arc<AtomicBool>,
+        focus: Arc<AtomicBool>,
+    ) -> Self {
+        let window_width = config.window_width();
+        Self {
+            stop,
+            ui_on,
+            focus,
+            config,
+            config_path,
+            screen: Screen::Mixer,
+            window_width,
+            restore_width: window_width,
+            restore_pos: None,
+            maximized: false,
+            resizing: false,
+            resize_start: window_width,
+            resize_pointer: None,
+            enable_resize_at: Some(Instant::now() + Duration::from_millis(700)),
+            pending_move: None,
+        }
+    }
+
+    fn save_config(&mut self) {
+        self.config.window_width = if self.maximized {
+            self.restore_width
+        } else {
+            self.window_width
+        };
+        if let Err(error) = self.config.save(&self.config_path) {
+            log::warn!("Could not save config: {error:#}");
+        }
+    }
+
+    /// Move after a resize has been acknowledged. Sending both in one frame
+    /// makes X11 keep the old size.
+    fn schedule_move(&mut self, pos: egui::Pos2, width: f32) {
+        self.pending_move = Some((pos, width, Instant::now() + Duration::from_millis(400)));
+    }
+
+    fn hide(&mut self, ctx: &Context) {
+        self.save_config();
+        self.ui_on.store(false, Ordering::Relaxed);
+        ctx.send_viewport_cmd(ViewportCommand::Close);
+    }
+
+    fn set_window_width(&mut self, width: f32, ctx: &Context, monitor: Option<Rect>) {
+        let width = width.clamp(theme::MIN_WINDOW_WIDTH, theme::MAX_WINDOW_WIDTH);
+        let size = vec2(width, width / theme::ASPECT);
+        let was_maximized = self.maximized;
+        self.window_width = width;
+        self.maximized = false;
+        if was_maximized {
+            ctx.send_viewport_cmd(ViewportCommand::Maximized(false));
+        }
+        if let (Some(monitor), Some(outer)) =
+            (monitor, ctx.input(|input| input.viewport().outer_rect))
+        {
+            let pos = clamp_to_monitor(outer.min, size, monitor);
+            if (pos - outer.min).length_sq() > 1.0 {
+                self.schedule_move(pos, width);
+            }
+        }
+        ctx.send_viewport_cmd(ViewportCommand::InnerSize(size));
+        self.save_config();
+    }
+
+    fn toggle_maximize(&mut self, ctx: &Context, monitor: Option<Rect>) {
+        let can_position = ctx.input(|input| input.viewport().outer_rect).is_some();
+
+        if self.maximized {
+            self.maximized = false;
+            let width = self.restore_width;
+            let size = vec2(width, width / theme::ASPECT);
+            self.window_width = width;
+            ctx.send_viewport_cmd(ViewportCommand::Maximized(false));
+            if can_position {
+                ctx.send_viewport_cmd(ViewportCommand::InnerSize(size));
+                if let (Some(monitor), Some(pos)) = (monitor, self.restore_pos.take()) {
+                    let pos = clamp_to_monitor(pos, size, monitor);
+                    self.schedule_move(pos, width);
+                }
+            }
+            return;
+        }
+
+        self.restore_width = self.window_width;
+        self.restore_pos = ctx.input(|input| input.viewport().outer_rect).map(|rect| rect.min);
+        self.maximized = true;
+
+        if !can_position || monitor.is_none() {
+            // A Wayland client cannot place its own window, so let the
+            // compositor maximize it and letterbox the shell inside.
+            ctx.send_viewport_cmd(ViewportCommand::Maximized(true));
+            return;
+        }
+
+        let monitor = monitor.unwrap();
+        let max_width = (monitor.width() - 80.0).max(theme::MIN_WINDOW_WIDTH);
+        let max_height = (monitor.height() - 120.0).max(400.0);
+        let width = max_width
+            .min(max_height * theme::ASPECT)
+            .clamp(theme::MIN_WINDOW_WIDTH, theme::MAX_WINDOW_WIDTH);
+        let size = vec2(width, width / theme::ASPECT);
+        self.window_width = width;
+        let pos = clamp_to_monitor(monitor.center() - size * 0.5, size, monitor);
+        self.schedule_move(pos, width);
+        ctx.send_viewport_cmd(ViewportCommand::InnerSize(size));
+    }
+
+    fn paint_shell(&self, ui: &egui::Ui, map: &Map) {
+        let (uri, bytes) = if self.config.light_panel {
+            (theme::SHELL_LIGHT_URI, theme::SHELL_LIGHT_SVG)
+        } else {
+            (theme::SHELL_DARK_URI, theme::SHELL_DARK_SVG)
+        };
+        egui::Image::from_bytes(uri, bytes)
+            .fit_to_exact_size(map.size(vec2(theme::SHELL_W, theme::SHELL_H)))
+            .paint_at(ui, map.rect);
+    }
+
+    fn paint_bezel(
+        &mut self,
+        ui: &mut egui::Ui,
+        map: &Map,
+        ctx: &Context,
+        monitor: Option<Rect>,
+    ) {
+        let drag = map.rect(theme::bezel_drag());
+        let response = ui.interact(
+            drag,
+            Id::unique(("bezel-drag",)),
+            Sense::click_and_drag(),
+        );
+        if response.drag_started() {
+            ctx.send_viewport_cmd(ViewportCommand::StartDrag);
+        }
+        if response.double_clicked() {
+            self.toggle_maximize(ctx, monitor);
+        }
+
+        let painter = ui.painter();
+        let name_size = (15.0 * map.scale).max(9.0);
+        painter.text(
+            map.point(36.0, 28.0),
+            Align2::LEFT_CENTER,
+            "PIPEWEAVER",
+            FontId::proportional(name_size),
+            theme::ACCENT,
+        );
+        painter.text(
+            map.point(190.0, 28.0),
+            Align2::LEFT_CENTER,
+            "SMC MIXER",
+            FontId::proportional(name_size),
+            theme::TEXT,
+        );
+
+        painter.circle_filled(map.point(420.0, 28.0), 3.2 * map.scale, theme::DIM);
+        painter.text(
+            map.point(432.0, 28.0),
+            Align2::LEFT_CENTER,
+            "Pipeweaver not connected",
+            FontId::proportional((10.0 * map.scale).max(7.0)),
+            theme::DIM,
+        );
+
+        for (index, tooltip) in ["Minimize", "Maximize", "Close"].iter().enumerate() {
+            let rect = map.rect(theme::window_control_rect(index));
+            let response = ui.interact(
+                rect,
+                Id::unique(("window-control", index)),
+                Sense::click(),
+            );
+            let hovered = response.hovered();
+            let clicked = response.clicked();
+            response.on_hover_text(*tooltip);
+
+            let painter = ui.painter();
+            if hovered {
+                let fill = if index == 2 {
+                    theme::RED.gamma_multiply(0.25)
+                } else {
+                    theme::CARD_HOVER
+                };
+                painter.circle_filled(rect.center(), rect.width() * 0.5, fill);
+            }
+            let colour = if index == 2 && hovered {
+                theme::RED
+            } else {
+                theme::TEXT
+            };
+            let centre = rect.center();
+            let reach = rect.width() * 0.20;
+            let stroke = Stroke::new((1.5 * map.scale).max(1.0), colour);
+            match index {
+                0 => {
+                    painter.line_segment(
+                        [
+                            pos2(centre.x - reach, centre.y),
+                            pos2(centre.x + reach, centre.y),
+                        ],
+                        stroke,
+                    );
+                }
+                1 => {
+                    painter.rect_stroke(
+                        Rect::from_center_size(centre, vec2(reach * 2.0, reach * 2.0)),
+                        1.5,
+                        stroke,
+                        StrokeKind::Inside,
+                    );
+                }
+                _ => {
+                    painter.line_segment(
+                        [
+                            pos2(centre.x - reach, centre.y - reach),
+                            pos2(centre.x + reach, centre.y + reach),
+                        ],
+                        stroke,
+                    );
+                    painter.line_segment(
+                        [
+                            pos2(centre.x + reach, centre.y - reach),
+                            pos2(centre.x - reach, centre.y + reach),
+                        ],
+                        stroke,
+                    );
+                }
+            }
+
+            if clicked {
+                match index {
+                    0 => ctx.send_viewport_cmd(ViewportCommand::Minimized(true)),
+                    1 => self.toggle_maximize(ctx, monitor),
+                    _ => self.hide(ctx),
+                }
+            }
+        }
+    }
+
+    fn paint_nav(&mut self, ui: &mut egui::Ui, map: &Map) {
+        let entries = [
+            (Screen::Mixer, theme::nav_mixer(), "MIXER"),
+            (Screen::Config, theme::nav_config(), "CONFIG"),
+        ];
+        for (screen, rect, label) in entries {
+            let rect = map.rect(rect);
+            let response = ui.interact(rect, Id::unique(("nav", label)), Sense::click());
+            let active = self.screen == screen;
+            let on_config = self.screen == Screen::Config;
+            let painter = ui.painter();
+            if on_config {
+                painter.rect_filled(rect, map.radius(10.0), theme::CARD);
+                painter.rect_stroke(
+                    rect,
+                    map.radius(10.0),
+                    Stroke::new((1.2 * map.scale).max(1.0), theme::BORDER),
+                    StrokeKind::Inside,
+                );
+            }
+            if response.hovered() && !active {
+                painter.rect_filled(
+                    rect.shrink(3.0 * map.scale),
+                    map.radius(10.0),
+                    Color32::from_white_alpha(10),
+                );
+            }
+            if active {
+                painter.rect_stroke(
+                    rect.shrink(3.0 * map.scale),
+                    map.radius(10.0),
+                    Stroke::new((1.5 * map.scale).max(1.0), theme::ACCENT),
+                    StrokeKind::Inside,
+                );
+            }
+            painter.text(
+                rect.center(),
+                Align2::CENTER_CENTER,
+                label,
+                FontId::proportional((15.0 * map.scale).max(8.0)),
+                if active {
+                    theme::ACCENT
+                } else if on_config {
+                    theme::TEXT
+                } else {
+                    theme::panel_text(self.config.light_panel)
+                },
+            );
+            if response.clicked() {
+                self.screen = screen;
+            }
+        }
+    }
+
+    fn paint_config(
+        &mut self,
+        ui: &mut egui::Ui,
+        map: &Map,
+        ctx: &Context,
+        monitor: Option<Rect>,
+    ) {
+        let panel = map.rect(theme::config_panel());
+        let painter = ui.painter();
+        painter.rect_filled(panel, map.radius(18.0), theme::PANEL);
+        painter.rect_stroke(
+            panel,
+            map.radius(18.0),
+            Stroke::new(1.5 * map.scale, theme::BORDER),
+            StrokeKind::Inside,
+        );
+
+        let inner = panel.shrink(28.0 * map.scale);
+        let width = self.window_width;
+        let mut light = self.config.light_panel;
+        let mut reset = false;
+        let heading = (26.0 * map.scale).max(16.0);
+        let label = (12.0 * map.scale).max(9.0);
+        let section = (13.0 * map.scale).max(10.0);
+
+        ui.scope_builder(
+            UiBuilder::new().max_rect(inner).layout(Layout::top_down(Align::LEFT)),
+            |ui| {
+                ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
+                ui.label(
+                    RichText::new("Config")
+                        .size(heading)
+                        .strong()
+                        .color(theme::TEXT),
+                );
+                ui.label(
+                    RichText::new(
+                        "The shell is in place. Connection, surface and diagnostics arrive next.",
+                    )
+                    .size(label)
+                    .color(theme::DIM),
+                );
+                ui.add_space(6.0);
+                ui.separator();
+                ui.add_space(6.0);
+
+                ui.columns(2, |columns| {
+                    columns[0].label(
+                        RichText::new("Appearance")
+                            .size(section)
+                            .strong()
+                            .color(theme::TEXT),
+                    );
+                    columns[0].label(
+                        RichText::new("Panel finish")
+                            .size(label)
+                            .color(theme::DIM),
+                    );
+                    columns[0].checkbox(&mut light, "Light mixer panel");
+
+                    columns[0].add_space(12.0);
+                    columns[0].label(
+                        RichText::new("Window")
+                            .size(section)
+                            .strong()
+                            .color(theme::TEXT),
+                    );
+                    columns[0].label(
+                        RichText::new(format!("Width: {width:.0} px"))
+                            .size(label)
+                            .color(theme::TEXT),
+                    );
+                    columns[0].label(
+                        RichText::new("Aspect ratio locked at 1987:967")
+                            .size(label)
+                            .color(theme::DIM),
+                    );
+                    if columns[0].button("Reset size").clicked() {
+                        reset = true;
+                    }
+
+                    columns[1].label(
+                        RichText::new("Status")
+                            .size(section)
+                            .strong()
+                            .color(theme::TEXT),
+                    );
+                    columns[1].label(
+                        RichText::new("Pipeweaver: not connected")
+                            .size(label)
+                            .color(theme::DIM),
+                    );
+                    columns[1].label(
+                        RichText::new("MIDI: waiting")
+                            .size(label)
+                            .color(theme::DIM),
+                    );
+
+                    columns[1].add_space(12.0);
+                    columns[1].label(
+                        RichText::new("About")
+                            .size(section)
+                            .strong()
+                            .color(theme::TEXT),
+                    );
+                    columns[1].label(
+                        RichText::new(format!(
+                            "Pipeweaver SMC Mixer {}",
+                            theme::VERSION
+                        ))
+                        .size(label)
+                        .color(theme::TEXT),
+                    );
+                    columns[1].label(
+                        RichText::new("Shell milestone")
+                            .size(label)
+                            .color(theme::DIM),
+                    );
+                });
+            },
+        );
+
+        if light != self.config.light_panel {
+            self.config.light_panel = light;
+            self.save_config();
+        }
+        if reset {
+            self.set_window_width(1280.0, ctx, monitor);
+        }
+    }
+
+    fn paint_grip(
+        &mut self,
+        ui: &mut egui::Ui,
+        map: &Map,
+        ctx: &Context,
+        monitor: Option<Rect>,
+    ) {
+        let rect = map.rect(theme::resize_grip());
+        let response = ui.interact(rect, Id::unique(("resize-grip",)), Sense::drag());
+        if response.hovered() {
+            ctx.set_cursor_icon(egui::CursorIcon::ResizeNwSe);
+        }
+        if response.drag_started() {
+            self.resizing = true;
+            self.resize_start = self.window_width;
+            self.resize_pointer = response.interact_pointer_pos().map(|pos| pos.x);
+        }
+        if response.dragged() {
+            let pointer = ctx
+                .input(|input| input.pointer.interact_pos())
+                .map(|pos| pos.x);
+            if let (Some(start), Some(now)) = (self.resize_pointer, pointer) {
+                let width = (self.resize_start + now - start)
+                    .clamp(theme::MIN_WINDOW_WIDTH, theme::MAX_WINDOW_WIDTH);
+                let height = width / theme::ASPECT;
+                self.window_width = width;
+                self.maximized = false;
+                let size = vec2(width, height);
+                ctx.send_viewport_cmd(ViewportCommand::InnerSize(size));
+            }
+        }
+        if response.drag_stopped() {
+            self.resizing = false;
+            self.resize_pointer = None;
+            if let (Some(monitor), Some(outer)) =
+                (monitor, ctx.input(|input| input.viewport().outer_rect))
+            {
+                let size = vec2(self.window_width, self.window_width / theme::ASPECT);
+                let pos = clamp_to_monitor(outer.min, size, monitor);
+                if (pos - outer.min).length_sq() > 1.0 {
+                    self.schedule_move(pos, self.window_width);
+                }
+            }
+            self.save_config();
+        }
+
+        let painter = ui.painter();
+        let colour = if self.screen == Screen::Config {
+            theme::DIM
+        } else {
+            theme::panel_dim(self.config.light_panel)
+        };
+        for step in 0..3 {
+            let offset = 6.0 + step as f32 * 5.0;
+            painter.line_segment(
+                [
+                    map.point(1967.0 - offset, 950.0),
+                    map.point(1967.0, 950.0 - offset),
+                ],
+                Stroke::new((1.2 * map.scale).max(1.0), colour),
+            );
+        }
+    }
+}
+
+impl eframe::App for SmcApp {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+        let monitor = monitor_rect(frame);
+
+        // The window is created locked so tiling managers keep it floating.
+        // Once it has been mapped, allow programmatic resizing again.
+        if let Some(at) = self.enable_resize_at {
+            if Instant::now() >= at {
+                ctx.send_viewport_cmd(ViewportCommand::MinInnerSize(vec2(
+                    theme::MIN_WINDOW_WIDTH,
+                    theme::MIN_WINDOW_WIDTH / theme::ASPECT,
+                )));
+                ctx.send_viewport_cmd(ViewportCommand::MaxInnerSize(vec2(
+                    f32::INFINITY,
+                    f32::INFINITY,
+                )));
+                ctx.send_viewport_cmd(ViewportCommand::Resizable(true));
+                ctx.send_viewport_cmd(ViewportCommand::InnerSize(vec2(
+                    self.window_width,
+                    self.window_width / theme::ASPECT,
+                )));
+                self.enable_resize_at = None;
+            }
+        }
+
+        if self.focus.swap(false, Ordering::Relaxed) {
+            ctx.send_viewport_cmd(ViewportCommand::Focus);
+        }
+        if self.stop.load(Ordering::Relaxed) || !self.ui_on.load(Ordering::Relaxed) {
+            ctx.send_viewport_cmd(ViewportCommand::Close);
+        }
+        if ctx.input(|input| input.viewport().close_requested()) {
+            self.save_config();
+            self.ui_on.store(false, Ordering::Relaxed);
+        }
+        if let Some(rect) = ctx.input(|input| input.viewport().inner_rect) {
+            if !self.resizing {
+                self.window_width = rect.width();
+            }
+            if let Some((pos, width, deadline)) = self.pending_move {
+                if (rect.width() - width).abs() <= 1.0 || Instant::now() >= deadline {
+                    ctx.send_viewport_cmd(ViewportCommand::OuterPosition(pos));
+                    self.pending_move = None;
+                }
+            }
+        }
+        ctx.request_repaint_after(Duration::from_millis(50));
+
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE.fill(theme::BG))
+            .show(ui, |ui| {
+                let map = Map::new(ui.max_rect());
+                self.paint_shell(ui, &map);
+                self.paint_bezel(ui, &map, &ctx, monitor);
+                if self.screen == Screen::Config {
+                    self.paint_config(ui, &map, &ctx, monitor);
+                }
+                self.paint_nav(ui, &map);
+                self.paint_grip(ui, &map, &ctx, monitor);
+            });
+    }
+}

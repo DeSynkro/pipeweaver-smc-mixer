@@ -130,6 +130,14 @@ The mixer is probably not running the right preset. The app expects the CC and L
 
 It was built on a newer distribution. Build from source on your machine if your glibc is older.
 
+### The window ends up in a tile
+
+Pipeweaver SMC Mixer is a fixed-aspect device panel, so it opens with a fixed
+size. Krohnkite and similar tiling managers treat that as a floating window and
+leave it alone. If yours still tiles it, add an exception for
+`pipeweaver-smc-mixer` in the tiling settings.
+
+
 ## Support
 
 If this is useful to you, you can support me on [Ko-fi](https://ko-fi.com/desynkro). More of my work is at [desynkro.com](https://desynkro.com).

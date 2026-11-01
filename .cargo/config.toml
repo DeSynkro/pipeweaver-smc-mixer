@@ -1,0 +1,3 @@
+[build]
+# Keep Cargo output inside build/ instead of a top-level target directory.
+target-dir = "build/target"
