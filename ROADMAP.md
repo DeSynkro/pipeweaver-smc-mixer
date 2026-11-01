@@ -1,0 +1,50 @@
+# Roadmap
+
+Post-1.0 work. The 1.0 release covers the app, the AppImage/Docker builds and
+the initial documentation.
+
+## Next patch
+
+### Fixes
+
+- Recover from Pipeweaver broadcast lag instead of stopping status updates.
+- Stop Hex dictation when hiding, quitting, changing MIDI mode or losing the mixer.
+- Keep discrete commands queued when one HTTP command times out.
+- Handle tray failure so the app cannot become hidden and unquittable.
+- Turn LEDs off when switching MIDI connection or device.
+- Reset soft takeover after on-screen R/link changes.
+- Make autostart honour “Start minimized”.
+- Publish the actual MIDI link state instead of inferring it from port enumeration.
+- Decide and fix off-surface R semantics on linked sources.
+- Move blocking process calls off the Tokio runtime and add timeouts.
+- Quote the desktop-entry path in `install-desktop.sh`.
+- Pin and verify `appimagetool` in the AppImage build.
+
+### Cleanup
+
+- Fix the remaining clippy warnings.
+- Remove or wire up unused identity/config items.
+- Deduplicate the app name and id constants.
+- Remove the dead handler command channel.
+
+### Features
+
+- **Endless knob pickup mode.** The SMC knobs are endless encoders. Make each
+  knob move from the current Pipeweaver value in either direction instead of
+  treating the CC as an absolute position. Confirm the actual MIDI messages
+  first, then add the relative handling.
+
+## Later
+
+- Clip off-surface card titles.
+- Throttle drawer slider commands while held.
+- Only play the startup animation when an output port is open.
+- Make soft takeover more tolerant of feedback lag.
+- Prune meters and clear them when the meter socket closes.
+- Persist window position and maximize state.
+- Reap `xdg-open` child processes.
+- Harden engine lock handling against poisoning and the connected/offline race.
+- Security hardening: localhost trust, symlink/temp handling, MIDI port
+  impersonation, websocket/MPRIS timeouts, dependency pinning, signed checksums.
+- More tests: soft takeover, LED patterns, mapping handlers, config corruption,
+  broadcast lag and shutdown cleanup.

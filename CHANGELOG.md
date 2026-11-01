@@ -19,3 +19,9 @@ First release.
 - Soft takeover, light theme, channel colours and off-surface drawer toggle.
 - Offline Mixer screen and LEDs that turn off when Pipeweaver disconnects or the app stops.
 - AppImage and Docker Compose build paths.
+
+### Fixed
+
+- Formatted the core crate so `cargo fmt --check` passes.
+- Corrupt config files are backed up as `.json.bad` instead of being silently overwritten.
+- Config saves from the UI and tray are serialized so they cannot race.

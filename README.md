@@ -17,15 +17,19 @@
   Built by <a href="https://desynkro.com">DeSynkro</a> with assistance from <a href="https://opencode.ai">OpenCode</a>.
 </p>
 
-Pipeweaver SMC Mixer turns the M-VAVE SMC-Mixer into a dedicated hardware surface for Pipeweaver. The faceplate on screen matches the mixer in front of you. The faders and knobs drive Pipeweaver's Personal and Audience mixes, the buttons handle mutes, swaps and links, and the transport row controls your media player.
+Pipeweaver SMC Mixer turns the M-VAVE [SMC-Mixer](https://www.m-vave.com/product?id=smc-mixer) into a dedicated hardware surface for [Pipeweaver](https://github.com/pipeweaver/pipeweaver). The faceplate on screen matches the mixer in front of you. The faders and knobs drive Pipeweaver's Personal and Audience mixes, the buttons handle mutes, swaps and links, and the transport row controls your media player.
 
 This is a focused app. It only supports the SMC-Mixer and it only talks to Pipeweaver. There is no mapping editor, no plugin system and no setup wizard. Plug the mixer in, start Pipeweaver and go.
 
+<p align="center">
+  <img src="res/screenshot/program.png" alt="Pipeweaver SMC Mixer running" width="900">
+</p>
+
 ## Why this exists
 
-When I first moved to Linux, I had to navigate my audio setup without the convenience of my old Beacn Mix Create, as Beacn never release a Linux build.
+When I first moved to Linux, I had to work around my audio setup without the convenience of my old Beacn Mix Create, as Beacn never release a Linux build.
 
-I looked up online and ended up finding the SMC-Mixer by M-VAVE, a small, affordable controller with eight strips, eight knobs and a row of transport buttons. Fantastic little Audio Midi Table.
+I looked up online and ended up finding the SMC-Mixer by M-VAVE, a small, affordable MIDI controller with eight strips, eight knobs and a row of buttons. Fantastic little Audio Midi Table.
 
 I spent weeks trying to get it to work with Linux and to my dismay, I never managed to get it working, until a gentleman by the name of FrostyCoolSlug released [Pipeweaver](https://github.com/pipeweaver/pipeweaver).
 
@@ -38,13 +42,8 @@ It's a very niche software for a niche situation, but I thought i'd share if any
 
 - **Linux** with Wayland or X11.
 - **Pipeweaver** installed and running. The app talks to it on `localhost:14565`.
-- **M-VAVE SMC-Mixer**, connected over USB or Bluetooth.
-- **An SMC-Mixer on its factory preset.** The app expects the mapping in [SMC mapping](#smc-mapping); no programming is needed unless the unit has been remapped.
-- For the AppImage: a recent glibc. Builds are made on Arch, so older distributions may need to build from source.
-
-## Quick Start
-
-There is no release yet. The app is being rebuilt in milestones.
+- **M-VAVE SMC-Mixer preferably on its factory preset**, connected over USB or Bluetooth. The app expects the mapping in [SMC mapping](#smc-mapping). No programming should be needed unless the unit has been remapped.
+- **For the AppImage**: FUSE, or run it with `--appimage-extract-and-run`, plus a recent glibc and the usual Pipeweaver/audio/graphics stack. The Docker build uses Debian bookworm (glibc 2.36). A native build uses the host's glibc. 
 
 ### Build requirements
 
@@ -70,13 +69,15 @@ If you have Docker Compose but not the build dependencies:
 ./build/docker/build-in-docker.sh
 ```
 
-It prompts for binary + AppImage, binary only, or AppImage only. Pressing Enter picks the default. The first run downloads the base image and Cargo dependencies; later runs reuse the cache in `build/docker/cargo-cache`.
+It prompts for binary and/or AppImage. Pressing Enter picks the default. The first run downloads the base image and Cargo dependencies; later runs reuse the cache in `build/docker/cargo-cache`.
 
-The container is build-only. It does not run the app or pass through the desktop, audio or MIDI devices. Plain `docker compose` is used when it works without sudo; otherwise the script uses `sudo docker compose`. Set `COMPOSE="..."` or `DOCKER="..."` to override.
+The container is build-only. It does not run the app or pass through the desktop, audio or MIDI devices. Plain `docker compose` is used when it works without sudo, otherwise the script uses `sudo docker compose`. Set `COMPOSE="..."` or `DOCKER="..."` to override.
 
-Docker outputs stay in `build/docker/out/`, separate from the native `build/binary/` and `build/appimage/` outputs. The container is Debian bookworm (glibc 2.36), so Docker-built binaries need glibc 2.36 or newer at runtime. The AppImage does not bundle glibc or the graphics/audio libraries, so it has the same baseline. See `build/docker/README.md` for details.
+Docker outputs stay in `build/docker/out/`, separate from the native `build/binary/` and `build/appimage/` outputs. The container is Debian bookworm (glibc 2.36), so Docker-built binaries need glibc 2.36 or newer at runtime.
 
-Build and run from source:
+The AppImage does not bundle glibc or the graphics/audio libraries, so it has the same baseline. See `build/docker/README.md` for details.
+
+## Build and run from source
 
 ```sh
 ./build/build.sh binary
@@ -86,32 +87,43 @@ Build and run from source:
 
 `./build/build.sh` with no argument opens a menu for Binary, AppImage or Docker. Pass `binary`, `appimage` or `docker` to skip the menu.
 
+Build the AppImage locally:
+
+```sh
+./build/build.sh appimage
+```
+
+The result is `build/appimage/Pipeweaver-SMC-Mixer-x86_64.AppImage`. Release builds rename it to the versioned filename. See [RELEASING.md](RELEASING.md).
+
 The install step adds the desktop entry and hicolor icons, so the taskbar and
 launcher use the app logo instead of a generic icon.
 
 Start Pipeweaver first. The app starts in the tray when launched with `--quiet`, or shows the window when launched normally.
 
-When the first release is ready, the AppImage will be on the releases page:
+Once published, the AppImage will be on the releases page:
 
 ```sh
-chmod +x Pipeweaver-SMC-Mixer-x86_64.AppImage
-./Pipeweaver-SMC-Mixer-x86_64.AppImage
+chmod +x Pipeweaver-SMC-Mixer-1.0.0-x86_64.AppImage
+./Pipeweaver-SMC-Mixer-1.0.0-x86_64.AppImage
 ```
 
 ## Features
 
-- **Fixed SMC mapping:** faders, knobs, M/S/R and the square button, all on the documented CCs. No learn mode.
+- **Fixed SMC mapping:** faders, knobs, M/S/R and the link button, all on the documented CCs. No learn mode.
 - **Personal and Audience:** faders control the A mix, knobs control the B mix, R swaps them per strip.
+- **Soft takeover:** faders and knobs wait for the current value before taking over.
 - **Targets:** target faders, mutes and explicit A/B routing. The bar follows the active mix.
 - **Split:** share the eight strips between sources and targets, from 8/0 down to 4/4. Default is 6/2.
-- **Off-surface channels:** extra sources and targets stay reachable in a drawer inside the panel.
+- **Off-surface channels:** extra sources and targets stay reachable in a drawer. It can be hidden in Config.
 - **LED feedback:** M, S, R and link LEDs follow the state. The arrow LEDs stay local.
+- **Startup animation:** the strip LEDs fill left to right once per launch. It can be previewed or disabled.
 - **Transport:** play, pause, record, seek, track skip and the split buttons.
-- **Record button:** tap to show or hide the window, hold for one second to open the Pipeweaver UI.
+- **Record button:** hold for [Hex](https://github.com/anomalyco/hex) dictation. When Hex mode is off, tap toggles the default microphone mute.
 - **One window, two screens:** the mixer faceplate, and a Config screen in the same chassis.
 - **Frameless and aspect locked:** the faceplate is the window. It resizes without stretching.
-- **Light theme:** switch the whole app between the dark chassis and a light one.
-- **Tray and autostart:** close to tray, reopen with a click, start minimized on login.
+- **Light theme:** switch the whole app between the dark chassis and a light one, with optional channel colours.
+- **Offline state:** faders and knobs grey out and a reconnect card appears when Pipeweaver disconnects. LEDs go dark with the exception of the BT, Shift, Play, Pause and Arrow Buttons as they cannot be Software Controlled.
+- **Tray and autostart:** close to tray, reopen with a click, start minimized on login. The tray also switches MIDI connection, soft takeover and Hex mode.
 - **No telemetry:** no accounts, no analytics, no cloud.
 
 ## SMC mapping
@@ -137,7 +149,7 @@ The app expects the mixer's factory preset on MIDI channel 1. No programming is 
 | Split up / down | CC 59 / 60 |
 | Left / right | CC 61 / 62 |
 
-On source strips the second button is labelled **A** on screen but corresponds to the hardware **S** button; it mutes the Audience/B mix. On target strips, **S** selects mix A and **R** selects mix B.
+On source strips the second button is labelled **A** on screen but corresponds to the hardware **S** button. it mutes the Audience/B mix. On target strips, **S** selects mix A and **R** selects mix B.
 
 If the controls do not respond, the mixer may have been remapped or be on a different preset slot.
 
@@ -149,7 +161,7 @@ If the controls do not respond, the mixer may have been remapped or be on a diff
 4. Start Pipeweaver SMC Mixer.
 5. Open Config and choose the connection mode (Auto, Wired or Bluetooth). The MIDI port is detected automatically.
 
-Auto prefers the wired port and falls back to Bluetooth. The mixer can stay connected while you switch modes; the app reconnects automatically.
+Auto prefers the wired port and falls back to Bluetooth. The mixer can stay connected while you switch modes. The app reconnects automatically.
 
 ## What data is stored
 
@@ -159,7 +171,7 @@ The app keeps a small config file at:
 ~/.config/pipeweaver/pipeweaver-smc-mixer.json
 ```
 
-It stores the MIDI port, connection mode, mix labels, split, window width, light theme choice and start-minimized preference. Nothing else.
+It stores the connection mode, MIDI device name, mix labels, split, window width, light theme, channel colours, soft takeover, off-surface drawer visibility, record/Hex mode, startup animation and start-minimized preference.
 
 No audio, no daemon data and no telemetry leave your machine. The app only talks to Pipeweaver on localhost and to the mixer over MIDI.
 
@@ -173,7 +185,7 @@ No audio, no daemon data and no telemetry leave your machine. The app only talks
 | Pipeweaver | Pipeweaver IPC and websocket crates |
 | Media control | MPRIS through zbus |
 | Tray | ksni |
-| Packaging | AppImage |
+| Packaging | AppImage and Docker Compose |
 
 ## Troubleshooting
 
@@ -183,15 +195,21 @@ Start the Pipeweaver daemon and check that it answers on `localhost:14565`. The 
 
 ### No MIDI port in Config
 
-Check the cable or the Bluetooth pairing, then refresh the app. Auto mode tries the wired port first.
+Check the cable or the Bluetooth pairing. The app reconnects automatically, and Auto mode tries the wired port first.
 
 ### The buttons do nothing
 
-The mixer is probably not running the right preset. The app expects the CC and LED numbers in its fixed mapping. Load the preset and try again.
+The mixer may have been remapped or be on a different preset slot. Restore the factory preset or match the table in [SMC mapping](#smc-mapping).
 
 ### The AppImage does not start
 
-It was built on a newer distribution. Build from source on your machine if your glibc is older.
+If it reports a FUSE error, install FUSE or run it with `--appimage-extract-and-run`.
+
+If it fails on glibc, it was built on a newer distribution. Build from source on your machine, or use the Docker build, which uses Debian bookworm (glibc 2.36).
+
+### The Docker build cannot connect to Docker
+
+Start Docker, then run the command again. The wrapper uses `sudo docker compose` when plain Docker is not available.
 
 ### Start on login stopped working after moving the AppImage
 
@@ -207,6 +225,10 @@ leave it alone. If yours still tiles it, add an exception for
 `pipeweaver-smc-mixer` in the tiling settings.
 
 
+## Roadmap
+
+Upcoming fixes and features are tracked in [ROADMAP.md](ROADMAP.md).
+
 ## Support
 
 If this is useful to you, you can support me on [Ko-fi](https://ko-fi.com/desynkro). More of my work is at [desynkro.com](https://desynkro.com).
@@ -220,8 +242,8 @@ MIT. See [LICENSE](LICENSE).
 - Built by [DeSynkro](https://desynkro.com)
 - Assisted by [OpenCode](https://opencode.ai)
 - Faceplate artwork drawn by my wife, adapted for this app
-- [Pipeweaver](https://github.com/pipeweaver/pipeweaver) by the Pipeweaver project
-- M-VAVE for the SMC-Mixer
+- [Pipeweaver](https://github.com/pipeweaver/pipeweaver) by the Pipeweaver project and FrostyCoolSlug
+- [M-VAVE](https://www.m-vave.com/) for the SMC-Mixer
 - Thank you to everyone who tested, listened and helped 😄️
 
 <p align="center">
