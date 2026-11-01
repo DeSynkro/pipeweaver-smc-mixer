@@ -1,4 +1,5 @@
 mod app;
+mod midi;
 mod single_instance;
 mod theme;
 mod tray;
@@ -52,6 +53,18 @@ async fn main() -> Result<()> {
     });
     let tray_handle = tokio::spawn(tray::spawn(stop.clone(), tray_context.clone()));
 
+    let mixer_online = Arc::new(AtomicBool::new(false));
+    {
+        let online = mixer_online.clone();
+        let config = initial.clone();
+        tokio::spawn(async move {
+            loop {
+                online.store(midi::detect(&config), Ordering::Relaxed);
+                tokio::time::sleep(Duration::from_secs(2)).await;
+            }
+        });
+    }
+
     let engine = Engine::new();
     {
         let source_slots = initial.surface_sources;
@@ -86,6 +99,7 @@ async fn main() -> Result<()> {
             let config_path = config_path.clone();
             let tray_context = tray_context.clone();
             let engine = engine.clone();
+            let mixer_online = mixer_online.clone();
 
             eframe::run_native(
                 theme::APP_NAME,
@@ -103,6 +117,7 @@ async fn main() -> Result<()> {
                         ui_on,
                         focus,
                         engine,
+                        mixer_online,
                     )))
                 }),
             )?;

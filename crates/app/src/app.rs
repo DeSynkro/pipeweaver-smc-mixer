@@ -48,6 +48,7 @@ pub struct SmcApp {
     pipeweaver_online: bool,
     engine: Arc<Engine>,
     mixer_online: bool,
+    mixer_net: Arc<AtomicBool>,
     window_width: f32,
     restore_width: f32,
     restore_pos: Option<egui::Pos2>,
@@ -67,6 +68,7 @@ impl SmcApp {
         ui_on: Arc<AtomicBool>,
         focus: Arc<AtomicBool>,
         engine: Arc<Engine>,
+        mixer_net: Arc<AtomicBool>,
     ) -> Self {
         let window_width = config.window_width();
         Self {
@@ -79,6 +81,7 @@ impl SmcApp {
             pipeweaver_online: false,
             engine,
             mixer_online: false,
+            mixer_net,
             window_width,
             restore_width: window_width,
             restore_pos: None,
@@ -578,9 +581,13 @@ impl SmcApp {
                         .color(palette.dim),
                     );
                     columns[1].label(
-                        RichText::new("MIDI: waiting")
-                            .size(label)
-                            .color(palette.dim),
+                        RichText::new(if self.mixer_online {
+                            "MIDI: SMC-Mixer detected"
+                        } else {
+                            "MIDI: waiting"
+                        })
+                        .size(label)
+                        .color(palette.dim),
                     );
 
                     columns[1].add_space(12.0);
@@ -688,6 +695,7 @@ impl eframe::App for SmcApp {
         let monitor = monitor_rect(frame);
         let snapshot = self.engine.snapshot();
         self.pipeweaver_online = snapshot.connected;
+        self.mixer_online = self.mixer_net.load(Ordering::Relaxed);
 
         // The window is created locked so tiling managers keep it floating.
         // Once it has been mapped, allow programmatic resizing again.
