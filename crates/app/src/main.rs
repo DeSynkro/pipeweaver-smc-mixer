@@ -91,11 +91,13 @@ async fn main() -> Result<()> {
         });
     }
     let swap = Arc::new(AtomicU8::new(0));
+    let pickup = Arc::new(AtomicBool::new(initial.pickup));
     {
         let config = initial.clone();
         let engine = engine.clone();
         let swap = swap.clone();
-        std::thread::spawn(move || midi::run_controls(config, engine, command_tx, swap));
+        let pickup = pickup.clone();
+        std::thread::spawn(move || midi::run_controls(config, engine, command_tx, swap, pickup));
     }
 
     while !stop.load(Ordering::Relaxed) {
@@ -111,6 +113,7 @@ async fn main() -> Result<()> {
             let engine = engine.clone();
             let midi_link = midi_link.clone();
             let swap = swap.clone();
+            let pickup = pickup.clone();
 
             eframe::run_native(
                 theme::APP_NAME,
@@ -130,6 +133,7 @@ async fn main() -> Result<()> {
                         engine,
                         midi_link,
                         swap,
+                        pickup,
                     )))
                 }),
             )?;

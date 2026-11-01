@@ -51,6 +51,7 @@ pub struct SmcApp {
     midi: Link,
     midi_net: Arc<AtomicU8>,
     swap: Arc<AtomicU8>,
+    pickup_net: Arc<AtomicBool>,
     window_width: f32,
     restore_width: f32,
     restore_pos: Option<egui::Pos2>,
@@ -73,6 +74,7 @@ impl SmcApp {
         engine: Arc<Engine>,
         midi_net: Arc<AtomicU8>,
         swap: Arc<AtomicU8>,
+        pickup_net: Arc<AtomicBool>,
     ) -> Self {
         let window_width = config.window_width();
         Self {
@@ -87,6 +89,7 @@ impl SmcApp {
             midi: Link::Offline,
             midi_net,
             swap,
+            pickup_net,
             window_width,
             restore_width: window_width,
             restore_pos: None,
@@ -519,6 +522,7 @@ impl SmcApp {
         let inner = panel.shrink(28.0 * map.scale);
         let width = self.window_width;
         let mut light = self.config.light_panel;
+        let mut pickup = self.pickup_net.load(Ordering::Relaxed);
         let mut reset = false;
         let heading = (34.0 * map.scale).max(22.0);
         let label = (16.0 * map.scale).max(12.0);
@@ -558,6 +562,14 @@ impl SmcApp {
                             .color(palette.dim),
                     );
                     columns[0].checkbox(&mut light, "Light theme");
+                    columns[0].checkbox(&mut pickup, "Soft takeover");
+                    columns[0].label(
+                        RichText::new(
+                            "Faders and knobs wait for the current value before taking over.",
+                        )
+                        .size(label)
+                        .color(palette.dim),
+                    );
 
                     columns[0].add_space(12.0);
                     columns[0].label(
@@ -632,6 +644,11 @@ impl SmcApp {
         if light != self.config.light_panel {
             self.config.light_panel = light;
             ctx.set_visuals(theme::visuals(light));
+            self.save_config();
+        }
+        if pickup != self.config.pickup {
+            self.config.pickup = pickup;
+            self.pickup_net.store(pickup, Ordering::Relaxed);
             self.save_config();
         }
         if reset {

@@ -24,6 +24,10 @@ fn default_width() -> f32 {
     1280.0
 }
 
+fn default_pickup() -> bool {
+    true
+}
+
 fn default_schema() -> u32 {
     1
 }
@@ -36,6 +40,8 @@ pub struct Config {
     pub surface_sources: usize,
     pub mix_labels: [String; 2],
     pub light_panel: bool,
+    #[serde(default = "default_pickup")]
+    pub pickup: bool,
     pub start_minimized: bool,
     pub window_width: f32,
     pub schema: u32,
@@ -49,6 +55,7 @@ impl Default for Config {
             surface_sources: default_sources(),
             mix_labels: default_labels(),
             light_panel: false,
+            pickup: default_pickup(),
             start_minimized: false,
             window_width: default_width(),
             schema: default_schema(),

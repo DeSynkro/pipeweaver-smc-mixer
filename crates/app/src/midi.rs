@@ -6,9 +6,10 @@ use pipeweaver_shared::{Mix, MuteState, MuteTarget};
 use pipeweaver_smc_core::config::{Config, MidiMode};
 use pipeweaver_smc_core::engine::{ChannelKind, Engine, Snapshot};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::time::Duration;
 use tokio::sync::mpsc::Sender;
+use ulid::Ulid;
 
 const LED_ON: u8 = 127;
 const LED_OFF: u8 = 0;
@@ -159,10 +160,14 @@ pub fn run_controls(
     engine: Arc<Engine>,
     commands: Sender<DaemonRequest>,
     swap: Arc<AtomicU8>,
+    pickup: Arc<AtomicBool>,
 ) {
     let callback_engine = engine.clone();
     let callback_commands = commands.clone();
     let callback_swap = swap.clone();
+    let callback_pickup = pickup.clone();
+    let mut pickup_state = PickupState::default();
+    let mut pickup_was = false;
     let mut pressed = [false; 128];
 
     let callback = move |message: &[u8]| {
@@ -171,9 +176,22 @@ pub fn run_controls(
         }
         let control = message[1];
         let value = message[2];
+        let pickup_enabled = callback_pickup.load(Ordering::Relaxed);
+        if pickup_enabled && !pickup_was {
+            pickup_state.reset_all();
+        }
+        pickup_was = pickup_enabled;
 
         match control {
-            30..=47 => handle_axis(control, value, &callback_engine, &callback_commands, &callback_swap),
+            30..=47 => handle_axis(
+                control,
+                value,
+                &callback_engine,
+                &callback_commands,
+                &callback_swap,
+                &mut pickup_state,
+                pickup_enabled,
+            ),
             64..=95 => {
                 let down = value > 64;
                 if pressed[control as usize] == down {
@@ -181,7 +199,13 @@ pub fn run_controls(
                 }
                 pressed[control as usize] = down;
                 if down {
-                    handle_button(control, &callback_engine, &callback_commands, &callback_swap);
+                    handle_button(
+                        control,
+                        &callback_engine,
+                        &callback_commands,
+                        &callback_swap,
+                        &mut pickup_state,
+                    );
                 }
             }
             _ => {}
@@ -213,12 +237,107 @@ pub fn run_controls(
     }
 }
 
+#[derive(Clone, Copy)]
+struct AxisPickup {
+    id: Ulid,
+    initialized: bool,
+    caught: bool,
+    last_raw: u8,
+}
+
+impl Default for AxisPickup {
+    fn default() -> Self {
+        Self {
+            id: Ulid::nil(),
+            initialized: false,
+            caught: false,
+            last_raw: 0,
+        }
+    }
+}
+
+#[derive(Default)]
+struct PickupState {
+    axes: [[AxisPickup; 2]; 8],
+}
+
+impl PickupState {
+    fn reset_all(&mut self) {
+        *self = Self::default();
+    }
+
+    fn reset_strip(&mut self, index: usize) {
+        self.axes[index] = [AxisPickup::default(); 2];
+    }
+
+    fn reset_knob(&mut self, index: usize) {
+        self.axes[index][1] = AxisPickup::default();
+    }
+
+    fn filter(
+        &mut self,
+        index: usize,
+        axis: usize,
+        raw: u8,
+        target_percent: u8,
+        id: Ulid,
+        enabled: bool,
+    ) -> Option<u8> {
+        let percent = ((raw as u16 * 100 + 63) / 127) as u8;
+        if !enabled {
+            return Some(percent);
+        }
+
+        let state = &mut self.axes[index][axis];
+        if state.id != id {
+            *state = AxisPickup {
+                id,
+                ..Default::default()
+            };
+        }
+
+        let target_raw = ((target_percent as u16 * 127 + 50) / 100) as u8;
+        if !state.initialized {
+            state.initialized = true;
+            state.last_raw = raw;
+            if raw.abs_diff(target_raw) <= 2 {
+                state.caught = true;
+                return Some(target_percent);
+            }
+            return None;
+        }
+
+        if !state.caught {
+            let crossed = (state.last_raw < target_raw && raw >= target_raw)
+                || (state.last_raw > target_raw && raw <= target_raw);
+            if crossed || raw.abs_diff(target_raw) <= 2 {
+                state.caught = true;
+                state.last_raw = raw;
+                return Some(target_percent);
+            }
+            state.last_raw = raw;
+            return None;
+        }
+
+        if raw.abs_diff(target_raw) > 10 {
+            state.caught = false;
+            state.last_raw = raw;
+            return None;
+        }
+
+        state.last_raw = raw;
+        Some(percent)
+    }
+}
+
 fn handle_axis(
     control: u8,
     value: u8,
     engine: &Engine,
     commands: &Sender<DaemonRequest>,
     swap: &AtomicU8,
+    pickup: &mut PickupState,
+    pickup_enabled: bool,
 ) {
     let (index, is_knob) = match control {
         40..=47 => ((control - 40) as usize, false),
@@ -237,19 +356,36 @@ fn handle_axis(
         return;
     }
 
-    let percent = ((value as u16 * 100 + 63) / 127) as u8;
-    let request = match channel.kind {
+    let (target_percent, mix) = match channel.kind {
         ChannelKind::Source => {
             if is_knob && channel.linked {
                 return;
             }
             let swapped = swap.load(Ordering::Relaxed) & (1 << index) != 0;
-            let mix = match (is_knob, swapped) {
-                (false, false) => Mix::A,
-                (false, true) => Mix::B,
-                (true, false) => Mix::B,
-                (true, true) => Mix::A,
-            };
+            match (is_knob, swapped) {
+                (false, false) => (channel.fader, Mix::A),
+                (false, true) => (channel.knob, Mix::B),
+                (true, false) => (channel.knob, Mix::B),
+                (true, true) => (channel.fader, Mix::A),
+            }
+        }
+        ChannelKind::Target => (channel.fader, Mix::A),
+    };
+
+    let axis = usize::from(is_knob);
+    let Some(percent) = pickup.filter(
+        index,
+        axis,
+        value,
+        target_percent,
+        channel.id,
+        pickup_enabled,
+    ) else {
+        return;
+    };
+
+    let request = match channel.kind {
+        ChannelKind::Source => {
             DaemonRequest::Pipewire(APICommand::SetSourceVolume(channel.id, mix, percent))
         }
         ChannelKind::Target => {
@@ -264,6 +400,7 @@ fn handle_button(
     engine: &Engine,
     commands: &Sender<DaemonRequest>,
     swap: &AtomicU8,
+    pickup: &mut PickupState,
 ) {
     let index = match control {
         64..=71 => (control - 64) as usize,
@@ -283,6 +420,7 @@ fn handle_button(
 
     if control / 8 == 10 && channel.kind == ChannelKind::Source {
         swap.fetch_xor(1 << index, Ordering::Relaxed);
+        pickup.reset_strip(index);
         return;
     }
 
@@ -323,9 +461,13 @@ fn handle_button(
             }
             DaemonRequest::Pipewire(APICommand::SetTargetMix(channel.id, Mix::B))
         }
-        (11, ChannelKind::Source) => DaemonRequest::Pipewire(
-            APICommand::SetSourceVolumeLinked(channel.id, !channel.linked),
-        ),
+        (11, ChannelKind::Source) => {
+            pickup.reset_knob(index);
+            DaemonRequest::Pipewire(APICommand::SetSourceVolumeLinked(
+                channel.id,
+                !channel.linked,
+            ))
+        }
         _ => return,
     };
 
