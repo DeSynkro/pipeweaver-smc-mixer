@@ -6,8 +6,9 @@ use pipeweaver_shared::{Mix, MuteState, MuteTarget};
 use crate::media::MediaCommand;
 use pipeweaver_smc_core::config::{Config, MidiMode};
 use pipeweaver_smc_core::engine::{ChannelKind, Engine, Snapshot};
-use std::sync::Arc;
+use egui::ViewportCommand;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::mpsc::{Sender, UnboundedSender};
 use ulid::Ulid;
@@ -166,6 +167,8 @@ pub fn run_controls(
     ui_on: Arc<AtomicBool>,
     focus: Arc<AtomicBool>,
     record_hex: Arc<AtomicBool>,
+    minimized: Arc<AtomicBool>,
+    egui: Arc<Mutex<Option<egui::Context>>>,
 ) {
     let callback_engine = engine.clone();
     let callback_commands = commands.clone();
@@ -175,6 +178,8 @@ pub fn run_controls(
     let callback_ui_on = ui_on.clone();
     let callback_focus = focus.clone();
     let callback_record_hex = record_hex.clone();
+    let callback_minimized = minimized.clone();
+    let callback_egui = egui.clone();
     let mut pickup_state = PickupState::default();
     let mut pickup_was = false;
     let mut pressed = [false; 128];
@@ -217,6 +222,8 @@ pub fn run_controls(
                     &callback_focus,
                     &callback_record_hex,
                     &mut hex_active,
+                    &callback_minimized,
+                    &callback_egui,
                 );
             }
             64..=95 => {
@@ -273,6 +280,8 @@ fn handle_transport(
     focus: &Arc<AtomicBool>,
     record_hex: &Arc<AtomicBool>,
     hex_active: &mut bool,
+    minimized: &Arc<AtomicBool>,
+    egui: &Arc<Mutex<Option<egui::Context>>>,
 ) {
     let hex = record_hex.load(Ordering::Relaxed);
     if !down {
@@ -312,9 +321,18 @@ fn handle_transport(
         59 => engine.set_source_slots(engine.source_slots().saturating_sub(1)),
         60 => engine.set_source_slots(engine.source_slots() + 1),
         61 => {
-            let was_on = ui_on.fetch_xor(true, Ordering::Relaxed);
-            if !was_on {
+            if minimized.swap(false, Ordering::Relaxed) {
+                if let Some(ctx) = egui.lock().unwrap().as_ref() {
+                    ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
+                    ctx.send_viewport_cmd(ViewportCommand::Focus);
+                }
+                ui_on.store(true, Ordering::Relaxed);
                 focus.store(true, Ordering::Relaxed);
+            } else {
+                let was_on = ui_on.fetch_xor(true, Ordering::Relaxed);
+                if !was_on {
+                    focus.store(true, Ordering::Relaxed);
+                }
             }
         }
         62 => {

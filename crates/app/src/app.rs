@@ -4,7 +4,7 @@ use egui::{
     Align, Align2, Color32, Context, FontId, Id, Layout, Rect, RichText, Sense, Shape, Stroke,
     StrokeKind, UiBuilder, Vec2, ViewportCommand, pos2, vec2,
 };
-use pipeweaver_smc_core::config::Config;
+use pipeweaver_smc_core::config::{autostart_path, set_autostart, Config};
 use pipeweaver_ipc::commands::{APICommand, DaemonRequest};
 use pipeweaver_shared::{Mix, MuteState, MuteTarget};
 use pipeweaver_smc_core::{
@@ -68,6 +68,8 @@ pub struct SmcApp {
     media_tx: tokio::sync::mpsc::UnboundedSender<MediaCommand>,
     record_hex: Arc<AtomicBool>,
     mic_muted: Arc<AtomicBool>,
+    minimized: Arc<AtomicBool>,
+    minimize_at: Option<Instant>,
     record_down: bool,
     window_width: f32,
     restore_width: f32,
@@ -96,6 +98,7 @@ impl SmcApp {
         media_tx: tokio::sync::mpsc::UnboundedSender<MediaCommand>,
         record_hex: Arc<AtomicBool>,
         mic_muted: Arc<AtomicBool>,
+        minimized: Arc<AtomicBool>,
     ) -> Self {
         let window_width = config.window_width();
         Self {
@@ -118,6 +121,8 @@ impl SmcApp {
             media_tx,
             record_hex,
             mic_muted,
+            minimized,
+            minimize_at: None,
             record_down: false,
             window_width,
             restore_width: window_width,
@@ -1061,7 +1066,11 @@ impl SmcApp {
 
             if clicked {
                 match index {
-                    0 => ctx.send_viewport_cmd(ViewportCommand::Minimized(true)),
+                    0 => {
+                        self.minimized.store(true, Ordering::Relaxed);
+                        self.minimize_at = Some(Instant::now());
+                        ctx.send_viewport_cmd(ViewportCommand::Minimized(true));
+                    }
                     1 => self.toggle_maximize(ctx, monitor),
                     _ => self.hide(ctx),
                 }
@@ -1149,6 +1158,9 @@ impl SmcApp {
         let mut channel_colours = self.config.channel_colours;
         let mut hide_off_surface = self.config.hide_off_surface;
         let mut record_hex = self.record_hex.load(Ordering::Relaxed);
+        let mut start_minimized = self.config.start_minimized;
+        let autostart_present = autostart_path().exists();
+        let mut start_on_login = autostart_present;
         let mut reset = false;
         let heading = (34.0 * map.scale).max(22.0);
         let label = (16.0 * map.scale).max(12.0);
@@ -1241,6 +1253,26 @@ impl SmcApp {
                     if columns[0].button("Reset size").clicked() {
                         reset = true;
                     }
+
+                    columns[0].add_space(12.0);
+                    columns[0].label(
+                        RichText::new("Startup")
+                            .size(section)
+                            .strong()
+                            .color(palette.text),
+                    );
+                    columns[0].checkbox(&mut start_on_login, "Start on login");
+                    columns[0].label(
+                        RichText::new("Adds an autostart entry for the next sign-in.")
+                            .size(label)
+                            .color(palette.dim),
+                    );
+                    columns[0].checkbox(&mut start_minimized, "Start minimized");
+                    columns[0].label(
+                        RichText::new("Opens in the tray when launched.")
+                            .size(label)
+                            .color(palette.dim),
+                    );
 
                     columns[1].label(
                         RichText::new("Features")
@@ -1372,6 +1404,15 @@ impl SmcApp {
                 self.drawer_t = 0.0;
             }
             self.save_config();
+        }
+        if start_minimized != self.config.start_minimized {
+            self.config.start_minimized = start_minimized;
+            self.save_config();
+        }
+        if start_on_login != autostart_present {
+            if let Err(error) = set_autostart(start_on_login) {
+                log::warn!("Could not update autostart: {error:#}");
+            }
         }
         if record_hex != self.record_hex.load(Ordering::Relaxed) {
             self.record_hex.store(record_hex, Ordering::Relaxed);
@@ -1687,6 +1728,14 @@ impl eframe::App for SmcApp {
         let snapshot = self.engine.snapshot();
         self.pipeweaver_online = snapshot.connected;
         self.midi = Link::from_code(self.midi_net.load(Ordering::Relaxed));
+        if let Some(at) = self.minimize_at {
+            if Instant::now() >= at + Duration::from_millis(400)
+                && ctx.input(|input| input.viewport().minimized) == Some(false)
+            {
+                self.minimized.store(false, Ordering::Relaxed);
+                self.minimize_at = None;
+            }
+        }
         let engine_slots = self.engine.source_slots();
         if engine_slots != self.config.surface_sources {
             self.config.surface_sources = engine_slots;

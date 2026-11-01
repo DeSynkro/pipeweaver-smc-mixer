@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
-use std::sync::Arc;
+use egui::ViewportCommand;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc::UnboundedReceiver;
 
 /// A desktop media action triggered by a transport button.
@@ -24,6 +25,8 @@ pub async fn run(
     ui_on: Arc<AtomicBool>,
     focus: Arc<AtomicBool>,
     mic_muted: Arc<AtomicBool>,
+    minimized: Arc<AtomicBool>,
+    egui: Arc<Mutex<Option<egui::Context>>>,
 ) {
     if let Some(state) = query_mic_mute() {
         mic_muted.store(state, Ordering::Relaxed);
@@ -32,9 +35,18 @@ pub async fn run(
         let result = match command {
             MediaCommand::OpenPipeweaver => open_pipeweaver(),
             MediaCommand::ToggleApp => {
-                let was_on = ui_on.fetch_xor(true, Ordering::Relaxed);
-                if !was_on {
+                if minimized.swap(false, Ordering::Relaxed) {
+                    if let Some(ctx) = egui.lock().unwrap().as_ref() {
+                        ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
+                        ctx.send_viewport_cmd(ViewportCommand::Focus);
+                    }
+                    ui_on.store(true, Ordering::Relaxed);
                     focus.store(true, Ordering::Relaxed);
+                } else {
+                    let was_on = ui_on.fetch_xor(true, Ordering::Relaxed);
+                    if !was_on {
+                        focus.store(true, Ordering::Relaxed);
+                    }
                 }
                 Ok(())
             }

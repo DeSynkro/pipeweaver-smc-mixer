@@ -120,6 +120,43 @@ pub fn config_home() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
+pub fn autostart_path() -> PathBuf {
+    config_home()
+        .join("autostart")
+        .join(format!("{}.desktop", crate::identity::APP_ID))
+}
+
+pub fn set_autostart(enabled: bool) -> Result<()> {
+    let path = autostart_path();
+    if !enabled {
+        match fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        return Ok(());
+    }
+    let parent = path.parent().context("autostart path has no parent")?;
+    fs::create_dir_all(parent)?;
+    let exe = std::env::current_exe()
+        .unwrap_or_else(|_| PathBuf::from(crate::identity::APP_ID));
+    let entry = format!(
+        "[Desktop Entry]\n\
+         Type=Application\n\
+         Name={}\n\
+         Comment=SMC-Mixer control surface for Pipeweaver\n\
+         Exec=env -u WAYLAND_DISPLAY \"{}\" --quiet\n\
+         Icon={}\n\
+         Terminal=false\n\
+         X-GNOME-Autostart-enabled=true\n",
+        crate::identity::APP_NAME,
+        exe.display(),
+        crate::identity::APP_ID,
+    );
+    fs::write(&path, entry)?;
+    Ok(())
+}
+
 pub fn state_dir() -> PathBuf {
     env::var_os("XDG_STATE_HOME")
         .map(PathBuf::from)

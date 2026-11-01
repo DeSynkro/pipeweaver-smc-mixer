@@ -47,10 +47,12 @@ async fn main() -> Result<()> {
     let stop = Arc::new(AtomicBool::new(false));
     let ui_on = Arc::new(AtomicBool::new(!start_minimized));
     let focus = Arc::new(AtomicBool::new(false));
+    let minimized = Arc::new(AtomicBool::new(false));
 
     let tray_context = Arc::new(tray::TrayContext {
         ui_on: ui_on.clone(),
         focus: focus.clone(),
+        minimized: minimized.clone(),
         egui: Arc::new(Mutex::new(None)),
     });
     let tray_handle = tokio::spawn(tray::spawn(stop.clone(), tray_context.clone()));
@@ -77,6 +79,8 @@ async fn main() -> Result<()> {
         ui_on.clone(),
         focus.clone(),
         mic_muted.clone(),
+        minimized.clone(),
+        tray_context.egui.clone(),
     ));
     let (command_tx, command_rx) = tokio::sync::mpsc::channel(128);
     {
@@ -115,6 +119,8 @@ async fn main() -> Result<()> {
         let midi_ui_on = ui_on.clone();
         let midi_focus = focus.clone();
         let midi_record_hex = record_hex.clone();
+        let midi_minimized = minimized.clone();
+        let midi_egui = tray_context.egui.clone();
         std::thread::spawn(move || {
             midi::run_controls(
                 config,
@@ -126,6 +132,8 @@ async fn main() -> Result<()> {
                 midi_ui_on,
                 midi_focus,
                 midi_record_hex,
+                midi_minimized,
+                midi_egui,
             )
         });
     }
@@ -149,6 +157,7 @@ async fn main() -> Result<()> {
             let media_tx = media_tx.clone();
             let record_hex = record_hex.clone();
             let mic_muted = mic_muted.clone();
+            let minimized = minimized.clone();
 
             eframe::run_native(
                 theme::APP_NAME,
@@ -173,6 +182,7 @@ async fn main() -> Result<()> {
                         media_tx,
                         record_hex,
                         mic_muted,
+                        minimized,
                     )))
                 }),
             )?;

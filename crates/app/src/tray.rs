@@ -11,6 +11,7 @@ use tokio::sync::mpsc;
 pub struct TrayContext {
     pub ui_on: Arc<AtomicBool>,
     pub focus: Arc<AtomicBool>,
+    pub minimized: Arc<AtomicBool>,
     pub egui: Arc<Mutex<Option<egui::Context>>>,
 }
 
@@ -34,9 +35,18 @@ pub async fn spawn(stop: Arc<AtomicBool>, context: Arc<TrayContext>) -> anyhow::
             Some(message) = rx.recv() => {
                 match message {
                     TrayMessage::Toggle => {
-                        let was_on = context.ui_on.fetch_xor(true, Ordering::Relaxed);
-                        if !was_on {
+                        if context.minimized.swap(false, Ordering::Relaxed) {
+                            if let Some(ctx) = context.egui.lock().unwrap().as_ref() {
+                                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                            }
+                            context.ui_on.store(true, Ordering::Relaxed);
                             context.focus.store(true, Ordering::Relaxed);
+                        } else {
+                            let was_on = context.ui_on.fetch_xor(true, Ordering::Relaxed);
+                            if !was_on {
+                                context.focus.store(true, Ordering::Relaxed);
+                            }
                         }
                     }
                     TrayMessage::Quit => {
