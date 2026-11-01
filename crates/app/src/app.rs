@@ -1492,6 +1492,13 @@ impl SmcApp {
                                 .color(palette.dim),
                         );
                     });
+                    columns[1].add_space(12.0);
+                    if columns[1].button("Quit app").clicked() {
+                        self.save_config();
+                        self.stop.store(true, Ordering::Relaxed);
+                        self.ui_on.store(false, Ordering::Relaxed);
+                        ctx.send_viewport_cmd(ViewportCommand::Close);
+                    }
                 });
                     });
             },
