@@ -1235,7 +1235,13 @@ impl SmcApp {
                             .size(label)
                             .color(palette.dim),
                     );
-                    if columns[0].button("Reset size").clicked() {
+                    if config_button(
+                        &mut columns[0],
+                        "Reset size",
+                        map.scale,
+                        palette,
+                        palette.accent,
+                    ) {
                         reset = true;
                     }
 
@@ -1271,25 +1277,72 @@ impl SmcApp {
                             .color(palette.dim),
                     );
                     let mut midi_mode = self.config.midi_mode;
-                    egui::ComboBox::from_id_salt("midi-mode")
-                        .selected_text(match midi_mode {
-                            MidiMode::Auto => "Auto",
-                            MidiMode::Wired => "Wired",
-                            MidiMode::Bluetooth => "Bluetooth",
-                        })
-                        .show_ui(&mut columns[1], |ui| {
-                            ui.selectable_value(
-                                &mut midi_mode,
-                                MidiMode::Auto,
-                                "Auto (wired first)",
-                            );
-                            ui.selectable_value(&mut midi_mode, MidiMode::Wired, "Wired");
-                            ui.selectable_value(
-                                &mut midi_mode,
-                                MidiMode::Bluetooth,
-                                "Bluetooth",
-                            );
-                        });
+                    let combo_width = (150.0 * map.scale).max(110.0);
+                    let combo_height = (26.0 * map.scale).max(20.0);
+                    columns[1].horizontal(|ui| {
+                        ui.allocate_ui_with_layout(
+                            vec2(combo_width, combo_height),
+                            Layout::left_to_right(Align::Center),
+                            |ui| {
+                                ui.set_max_width(combo_width);
+                                let radius =
+                                    egui::CornerRadius::same((7.0 * map.scale).round() as u8);
+                                let border =
+                                    Stroke::new((1.2 * map.scale).max(1.0), palette.border);
+                                let accent_border =
+                                    Stroke::new((1.2 * map.scale).max(1.0), palette.accent);
+                                {
+                                    let style = ui.style_mut();
+                                    style.spacing.interact_size.y =
+                                        (26.0 * map.scale).max(20.0);
+                                    style.visuals.widgets.inactive.bg_fill = palette.card;
+                                    style.visuals.widgets.inactive.bg_stroke = border;
+                                    style.visuals.widgets.inactive.corner_radius = radius;
+                                    style.visuals.widgets.inactive.fg_stroke =
+                                        Stroke::new(1.0, palette.accent);
+                                    style.visuals.widgets.hovered.bg_fill =
+                                        blend(palette.card, palette.accent, 0.18);
+                                    style.visuals.widgets.hovered.bg_stroke = accent_border;
+                                    style.visuals.widgets.hovered.corner_radius = radius;
+                                    style.visuals.widgets.hovered.fg_stroke =
+                                        Stroke::new(1.0, palette.accent);
+                                    style.visuals.widgets.active.bg_fill =
+                                        blend(palette.card, palette.accent, 0.24);
+                                    style.visuals.widgets.active.bg_stroke = accent_border;
+                                    style.visuals.widgets.active.corner_radius = radius;
+                                    style.visuals.widgets.active.fg_stroke =
+                                        Stroke::new(1.0, palette.accent);
+                                }
+                                egui::ComboBox::from_id_salt("midi-mode")
+                                    .width(combo_width)
+                                    .selected_text(
+                                        RichText::new(match midi_mode {
+                                            MidiMode::Auto => "Auto",
+                                            MidiMode::Wired => "Wired",
+                                            MidiMode::Bluetooth => "Bluetooth",
+                                        })
+                                        .color(palette.accent),
+                                    )
+                                    .show_ui(ui, |ui| {
+                                        ui.selectable_value(
+                                            &mut midi_mode,
+                                            MidiMode::Auto,
+                                            "Auto (wired first)",
+                                        );
+                                        ui.selectable_value(
+                                            &mut midi_mode,
+                                            MidiMode::Wired,
+                                            "Wired",
+                                        );
+                                        ui.selectable_value(
+                                            &mut midi_mode,
+                                            MidiMode::Bluetooth,
+                                            "Bluetooth",
+                                        );
+                                    });
+                            },
+                        );
+                    });
                     columns[1].label(
                         RichText::new(format!(
                             "MIDI port: {}",
@@ -1394,7 +1447,13 @@ impl SmcApp {
                         )
                     };
                     columns[1].label(RichText::new(activity).size(label).color(palette.dim));
-                    if columns[1].button("Flash LEDs").clicked() {
+                    if config_button(
+                        &mut columns[1],
+                        "Flash LEDs",
+                        map.scale,
+                        palette,
+                        palette.accent,
+                    ) {
                         self.led_test.store(true, Ordering::Relaxed);
                     }
                     let snapshot = self.engine.snapshot();
@@ -1493,7 +1552,13 @@ impl SmcApp {
                         );
                     });
                     columns[1].add_space(12.0);
-                    if columns[1].button("Quit app").clicked() {
+                    if config_button(
+                        &mut columns[1],
+                        "Quit app",
+                        map.scale,
+                        palette,
+                        palette.red,
+                    ) {
                         self.save_config();
                         self.stop.store(true, Ordering::Relaxed);
                         self.ui_on.store(false, Ordering::Relaxed);
@@ -2294,6 +2359,44 @@ fn on_colour(colour: Color32, palette: &theme::Palette) -> Color32 {
     } else {
         palette.text
     }
+}
+
+fn config_button(
+    ui: &mut egui::Ui,
+    label: &str,
+    scale: f32,
+    palette: &theme::Palette,
+    accent: Color32,
+) -> bool {
+    let size = vec2((120.0 * scale).max(84.0), (26.0 * scale).max(20.0));
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    let fill = if response.hovered() {
+        blend(palette.card, accent, 0.18)
+    } else {
+        palette.card
+    };
+    let border = if response.hovered() {
+        accent
+    } else {
+        palette.border
+    };
+    let radius = (7.0 * scale).round() as u8;
+    ui.painter()
+        .rect_filled(rect, egui::CornerRadius::same(radius), fill);
+    ui.painter().rect_stroke(
+        rect,
+        egui::CornerRadius::same(radius),
+        Stroke::new((1.2 * scale).max(1.0), border),
+        StrokeKind::Inside,
+    );
+    ui.painter().text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        label,
+        FontId::proportional((13.0 * scale).max(9.0)),
+        accent,
+    );
+    response.clicked()
 }
 
 fn card_button(
