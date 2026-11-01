@@ -167,7 +167,7 @@ pub fn run_controls(config: Config, engine: Arc<Engine>, commands: Sender<Daemon
 
         match control {
             30..=47 => handle_axis(control, value, &callback_engine, &callback_commands),
-            64..=79 => {
+            64..=87 => {
                 let down = value > 64;
                 if pressed[control as usize] == down {
                     return;
@@ -237,6 +237,7 @@ fn handle_button(control: u8, engine: &Engine, commands: &Sender<DaemonRequest>)
     let index = match control {
         64..=71 => (control - 64) as usize,
         72..=79 => (control - 72) as usize,
+        80..=87 => (control - 80) as usize,
         _ => return,
     };
 
@@ -274,8 +275,16 @@ fn handle_button(control: u8, engine: &Engine, commands: &Sender<DaemonRequest>)
             DaemonRequest::Pipewire(command)
         }
         (9, ChannelKind::Target) => {
-            let mix = if channel.mute_b { Mix::A } else { Mix::B };
-            DaemonRequest::Pipewire(APICommand::SetTargetMix(channel.id, mix))
+            if !channel.mix_b {
+                return;
+            }
+            DaemonRequest::Pipewire(APICommand::SetTargetMix(channel.id, Mix::A))
+        }
+        (10, ChannelKind::Target) => {
+            if channel.mix_b {
+                return;
+            }
+            DaemonRequest::Pipewire(APICommand::SetTargetMix(channel.id, Mix::B))
         }
         _ => return,
     };
@@ -290,7 +299,15 @@ fn send_leds(output: &mut MidiOutputConnection, snapshot: &Snapshot, last: &mut 
             continue;
         }
         desired[16 + index] = if channel.mute_a { LED_ON } else { LED_OFF };
-        desired[8 + index] = if channel.mute_b { LED_ON } else { LED_OFF };
+        desired[8 + index] = match channel.kind {
+            ChannelKind::Source if channel.mute_b => LED_ON,
+            ChannelKind::Target if !channel.mix_b => LED_ON,
+            _ => LED_OFF,
+        };
+        desired[index] = match channel.kind {
+            ChannelKind::Target if channel.mix_b => LED_ON,
+            _ => LED_OFF,
+        };
     }
 
     for (note, value) in desired.iter().enumerate() {

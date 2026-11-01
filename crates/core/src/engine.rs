@@ -24,6 +24,7 @@ pub struct Channel {
     pub knob: u8,
     pub mute_a: bool,
     pub mute_b: bool,
+    pub mix_b: bool,
     pub linked: bool,
 }
 
@@ -39,6 +40,7 @@ impl Default for Channel {
             knob: 0,
             mute_a: false,
             mute_b: false,
+            mix_b: false,
             linked: false,
         }
     }
@@ -137,6 +139,7 @@ fn source_channel(status: &DaemonStatus, id: Ulid) -> Option<Channel> {
                     .mute_states
                     .mute_state
                     .contains(&MuteTarget::TargetB),
+                mix_b: false,
                 linked: device.volumes.volumes_linked.is_some(),
             });
         }
@@ -160,6 +163,7 @@ fn source_channel(status: &DaemonStatus, id: Ulid) -> Option<Channel> {
                     .mute_states
                     .mute_state
                     .contains(&MuteTarget::TargetB),
+                mix_b: false,
                 linked: device.volumes.volumes_linked.is_some(),
             });
         }
@@ -182,7 +186,8 @@ fn target_channel(status: &DaemonStatus, id: Ulid) -> Option<Channel> {
                 fader: device.volume,
                 knob: device.volume,
                 mute_a: device.mute_state == MuteState::Muted,
-                mute_b: device.mix == Mix::B,
+                mute_b: false,
+                mix_b: device.mix == Mix::B,
                 linked: false,
             });
         }
@@ -199,7 +204,8 @@ fn target_channel(status: &DaemonStatus, id: Ulid) -> Option<Channel> {
                 fader: device.volume,
                 knob: device.volume,
                 mute_a: device.mute_state == MuteState::Muted,
-                mute_b: device.mix == Mix::B,
+                mute_b: false,
+                mix_b: device.mix == Mix::B,
                 linked: false,
             });
         }
