@@ -45,6 +45,7 @@ pub struct SmcApp {
     config_path: PathBuf,
     screen: Screen,
     pipeweaver_online: bool,
+    pipeweaver_net: Arc<AtomicBool>,
     mixer_online: bool,
     window_width: f32,
     restore_width: f32,
@@ -64,6 +65,7 @@ impl SmcApp {
         stop: Arc<AtomicBool>,
         ui_on: Arc<AtomicBool>,
         focus: Arc<AtomicBool>,
+        pipeweaver_net: Arc<AtomicBool>,
     ) -> Self {
         let window_width = config.window_width();
         Self {
@@ -74,6 +76,7 @@ impl SmcApp {
             config_path,
             screen: Screen::Mixer,
             pipeweaver_online: false,
+            pipeweaver_net,
             mixer_online: false,
             window_width,
             restore_width: window_width,
@@ -266,7 +269,7 @@ impl SmcApp {
                 if self.pipeweaver_online {
                     palette.green
                 } else {
-                    palette.dim.gamma_multiply(0.7)
+                    palette.red
                 },
             );
             painter.text(
@@ -282,7 +285,7 @@ impl SmcApp {
                 if self.mixer_online {
                     palette.green
                 } else {
-                    palette.dim.gamma_multiply(0.7)
+                    palette.red
                 },
             );
         }
@@ -503,9 +506,13 @@ impl SmcApp {
                             .color(palette.text),
                     );
                     columns[1].label(
-                        RichText::new("Pipeweaver: not connected")
-                            .size(label)
-                            .color(palette.dim),
+                        RichText::new(if self.pipeweaver_online {
+                            "Pipeweaver: connected"
+                        } else {
+                            "Pipeweaver: not connected"
+                        })
+                        .size(label)
+                        .color(palette.dim),
                     );
                     columns[1].label(
                         RichText::new("MIDI: waiting")
@@ -616,6 +623,7 @@ impl eframe::App for SmcApp {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         let monitor = monitor_rect(frame);
+        self.pipeweaver_online = self.pipeweaver_net.load(Ordering::Relaxed);
 
         // The window is created locked so tiling managers keep it floating.
         // Once it has been mapped, allow programmatic resizing again.

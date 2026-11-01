@@ -10,6 +10,8 @@ path = "src/main.rs"
 
 [dependencies]
 pipeweaver-smc-core = { path = "../core" }
+pipeweaver-ipc = { git = "https://github.com/pipeweaver/pipeweaver", tag = "v0.1.9" }
+pipeweaver-websocket-client = { git = "https://github.com/pauel3312/pwv-wsc-as-dep-for-pwv-midi.git", branch = "main" }
 anyhow = "1"
 clap = { version = "4.6.1", features = ["derive"] }
 eframe = "0.37.0"
