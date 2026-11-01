@@ -9,6 +9,8 @@ mod tray;
 use anyhow::Result;
 use clap::Parser;
 use eframe::egui;
+use pipeweaver_ipc::client::Client;
+use pipeweaver_ipc::clients::web::web_client::WebClient;
 use pipeweaver_smc_core::Engine;
 use pipeweaver_smc_core::config::{Config, state_dir};
 use pipeweaver_websocket_client::{BroadcastMessage, spawn_pipeweaver_handler};
@@ -83,14 +85,32 @@ async fn main() -> Result<()> {
         minimized.clone(),
         tray_context.egui.clone(),
     ));
-    let (command_tx, command_rx) = tokio::sync::mpsc::channel(128);
+    let (command_tx, mut command_rx) = tokio::sync::mpsc::channel(1024);
     {
         let (broadcast_tx, mut broadcast_rx) = tokio::sync::broadcast::channel(10);
-        let stop_handler = spawn_pipeweaver_handler(command_rx, broadcast_tx).await;
-        let engine = engine.clone();
-        let command_tx = command_tx.clone();
+        let (handler_tx, handler_rx) = tokio::sync::mpsc::channel(1);
+        let stop_handler = spawn_pipeweaver_handler(handler_rx, broadcast_tx).await;
+        drop(handler_tx);
+
+        // Commands go over the daemon's HTTP API with a timeout. Keeping them
+        // off the websocket means a stalled command send can never block the
+        // status patches that keep the surface alive.
         tokio::spawn(async move {
-            let _command_tx = command_tx;
+            let mut client = WebClient::new(String::from("http://localhost:14565/api/command"));
+            while let Some(request) = command_rx.recv().await {
+                match tokio::time::timeout(Duration::from_secs(2), client.send(&request)).await {
+                    Ok(Ok(_)) => {}
+                    Ok(Err(error)) => log::warn!("Pipeweaver command failed: {error:#}"),
+                    Err(_) => {
+                        log::warn!("Pipeweaver command timed out");
+                        while command_rx.try_recv().is_ok() {}
+                    }
+                }
+            }
+        });
+
+        let engine = engine.clone();
+        tokio::spawn(async move {
             let _stop_handler = stop_handler;
             while let Ok(message) = broadcast_rx.recv().await {
                 match message {
@@ -122,6 +142,7 @@ async fn main() -> Result<()> {
         let midi_record_hex = record_hex.clone();
         let midi_minimized = minimized.clone();
         let midi_egui = tray_context.egui.clone();
+        let midi_link = midi_link.clone();
         std::thread::spawn(move || {
             midi::run_controls(
                 config,
@@ -135,6 +156,7 @@ async fn main() -> Result<()> {
                 midi_record_hex,
                 midi_minimized,
                 midi_egui,
+                midi_link,
             )
         });
     }

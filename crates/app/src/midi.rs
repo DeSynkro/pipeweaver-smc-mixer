@@ -169,6 +169,7 @@ pub fn run_controls(
     record_hex: Arc<AtomicBool>,
     minimized: Arc<AtomicBool>,
     egui: Arc<Mutex<Option<egui::Context>>>,
+    midi_link: Arc<AtomicU8>,
 ) {
     let config_path = Config::path();
     let mut config = config;
@@ -269,6 +270,7 @@ pub fn run_controls(
 
         let mut leds = [u8::MAX; 32];
         let mut last_check = Instant::now();
+        let mut last_link = midi_link.load(Ordering::Relaxed);
         loop {
             if let Some(output) = output.as_mut() {
                 let snapshot = engine.snapshot();
@@ -277,6 +279,11 @@ pub fn run_controls(
             std::thread::sleep(Duration::from_millis(50));
             if last_check.elapsed() >= Duration::from_secs(1) {
                 last_check = Instant::now();
+                let link = midi_link.load(Ordering::Relaxed);
+                if link != last_link {
+                    last_link = link;
+                    break;
+                }
                 let latest = Config::load(&config_path);
                 if latest.midi_mode != config.midi_mode || latest.midi_device != config.midi_device
                 {
