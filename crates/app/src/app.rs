@@ -276,30 +276,28 @@ impl SmcApp {
             let knob_disabled = !is_source;
 
             let plate = map.rect(Rect::from_min_size(
-                pos2(base + 10.0, 271.5),
-                vec2(82.0, 20.0),
+                pos2(base + 1.0, 286.0),
+                vec2(100.0, 24.0),
             ));
-            painter.rect_filled(
-                plate,
-                map.radius(3.0),
-                Color32::from_rgba_unmultiplied(
-                    channel.colour.0,
-                    channel.colour.1,
-                    channel.colour.2,
-                    28,
-                ),
-            );
-            painter.rect_filled(
-                Rect::from_min_size(plate.min, vec2(plate.width(), (2.5 * scale).max(1.0))),
-                0,
-                channel_colour,
-            );
+            let name_font = FontId::proportional((14.0 * scale).max(8.5));
+            let name_width = painter
+                .layout_no_wrap(channel.name.clone(), name_font.clone(), palette.text)
+                .size()
+                .x;
             painter.with_clip_rect(plate).text(
-                plate.center(),
+                plate.center() - vec2(0.0, 2.0 * scale),
                 Align2::CENTER_CENTER,
                 &channel.name,
-                FontId::proportional((9.0 * scale).max(6.0)),
+                name_font,
                 palette.text,
+            );
+            painter.rect_filled(
+                Rect::from_min_size(
+                    pos2(plate.center().x - name_width * 0.5 - 4.0 * scale, plate.bottom() - 3.0 * scale),
+                    vec2(name_width + 8.0 * scale, (2.5 * scale).max(1.5)),
+                ),
+                0,
+                channel_colour,
             );
 
             let centre = map.point(base + 51.5, 170.0);
@@ -344,11 +342,11 @@ impl SmcApp {
                     Stroke::new((3.0 * scale).max(1.5), knob_colour),
                 );
                 painter.text(
-                    centre + vec2(0.0, 84.0 * scale),
+                    centre + vec2(0.0, 92.0 * scale),
                     Align2::CENTER_CENTER,
                     format!("{knob}%"),
-                    FontId::proportional((10.0 * scale).max(7.0)),
-                    palette.dim,
+                    FontId::proportional((13.0 * scale).max(9.0)),
+                    palette.text,
                 );
             }
 
@@ -371,18 +369,36 @@ impl SmcApp {
                 Stroke::new((1.5 * scale).max(1.0), palette.border),
                 StrokeKind::Inside,
             );
-            painter.line_segment(
-                [
-                    pos2(thumb.left() + 6.0 * scale, thumb.center().y),
-                    pos2(thumb.right() - 6.0 * scale, thumb.center().y),
-                ],
-                Stroke::new((2.0 * scale).max(1.0), fader_colour),
-            );
+            let value_text = format!("{fader}%");
+            let value_font = FontId::proportional((14.0 * scale).max(9.0));
+            let value_width = painter
+                .layout_no_wrap(value_text.clone(), value_font.clone(), palette.text)
+                .size()
+                .x;
+            let line_y = thumb.center().y;
+            let line_gap = 4.0 * scale;
+            let line_stroke = Stroke::new((2.0 * scale).max(1.0), fader_colour);
+            let left_start = thumb.left() + 6.0 * scale;
+            let left_end = thumb.center().x - value_width * 0.5 - line_gap;
+            let right_start = thumb.center().x + value_width * 0.5 + line_gap;
+            let right_end = thumb.right() - 6.0 * scale;
+            if left_end > left_start {
+                painter.line_segment(
+                    [pos2(left_start, line_y), pos2(left_end, line_y)],
+                    line_stroke,
+                );
+            }
+            if right_end > right_start {
+                painter.line_segment(
+                    [pos2(right_start, line_y), pos2(right_end, line_y)],
+                    line_stroke,
+                );
+            }
             painter.text(
                 thumb.center(),
                 Align2::CENTER_CENTER,
-                format!("{fader}%"),
-                FontId::proportional((11.0 * scale).max(7.0)),
+                value_text,
+                value_font,
                 palette.text,
             );
         }

@@ -41,10 +41,6 @@ SLOT_H = 451.0
 KNOB_DX = 51.5
 KNOB_Y = 114.0
 KNOB_R = 73.5
-PLATE_DX = 10.0
-PLATE_Y = 215.5
-PLATE_W = 82.0
-PLATE_H = 20.0
 BTN_DX = 128.0
 BTN_SIZE = 61.0
 BTN_Y = [308.5, 424.5, 540.5, 656.5]
@@ -166,12 +162,6 @@ def strip_svg(index: int, palette: dict) -> str:
         )
 
     out.append(
-        f'    <rect x="{fmt(base + PLATE_DX)}" y="{fmt(PLATE_Y)}" '
-        f'width="{fmt(PLATE_W)}" height="{fmt(PLATE_H)}" rx="3" '
-        f'fill="{palette["plate"]}" stroke="{palette["edge"]}" stroke-width="1.5"/>'
-    )
-
-    out.append(
         f'    <rect x="{fmt(base)}" y="{fmt(FADER_Y)}" '
         f'width="{fmt(FADER_W)}" height="{fmt(FADER_H)}" rx="14" '
         f'fill="{palette["well"]}" stroke="{palette["edge"]}" stroke-width="2"/>'
@@ -181,8 +171,8 @@ def strip_svg(index: int, palette: dict) -> str:
         f'width="{fmt(SLOT_W)}" height="{fmt(SLOT_H)}" rx="7" '
         f'fill="{palette["slot"]}" stroke="{palette["slot_line"]}" stroke-width="1"/>'
     )
-    for step in range(10):
-        y = SLOT_TOP + SLOT_H * step / 9.0
+    for step in range(11):
+        y = SLOT_TOP + SLOT_H * step / 10.0
         out.append(
             f'    <line x1="{fmt(base + 31)}" y1="{fmt(y)}" '
             f'x2="{fmt(base + 38)}" y2="{fmt(y)}" '
