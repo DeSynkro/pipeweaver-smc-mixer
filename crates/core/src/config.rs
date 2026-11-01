@@ -12,8 +12,12 @@ pub enum MidiMode {
     Bluetooth,
 }
 
+pub const SURFACE_SOURCES_MIN: usize = 4;
+pub const SURFACE_SOURCES_MAX: usize = 8;
+pub const SURFACE_SOURCES_DEFAULT: usize = 6;
+
 fn default_sources() -> usize {
-    6
+    SURFACE_SOURCES_DEFAULT
 }
 
 fn default_labels() -> [String; 2] {
@@ -71,7 +75,11 @@ impl Config {
         let Ok(data) = fs::read_to_string(path) else {
             return Self::default();
         };
-        serde_json::from_str(&data).unwrap_or_default()
+        let mut config: Self = serde_json::from_str(&data).unwrap_or_default();
+        config.surface_sources = config
+            .surface_sources
+            .clamp(SURFACE_SOURCES_MIN, SURFACE_SOURCES_MAX);
+        config
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {

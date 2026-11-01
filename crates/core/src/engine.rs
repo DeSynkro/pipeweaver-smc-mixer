@@ -1,3 +1,4 @@
+use crate::config::{SURFACE_SOURCES_MAX, SURFACE_SOURCES_MIN};
 use pipeweaver_ipc::commands::DaemonStatus;
 use pipeweaver_shared::{Mix, MuteState, MuteTarget, OrderGroup};
 use std::collections::{HashMap, HashSet};
@@ -66,13 +67,19 @@ impl Default for Snapshot {
 pub struct Engine {
     snapshot: RwLock<Arc<Snapshot>>,
     meters: RwLock<HashMap<Ulid, u8>>,
+    source_slots: RwLock<usize>,
+    status: RwLock<Option<DaemonStatus>>,
 }
 
 impl Engine {
-    pub fn new() -> Arc<Self> {
+    pub fn new(source_slots: usize) -> Arc<Self> {
         Arc::new(Self {
             snapshot: RwLock::new(Arc::new(Snapshot::default())),
             meters: RwLock::new(HashMap::new()),
+            source_slots: RwLock::new(
+                source_slots.clamp(SURFACE_SOURCES_MIN, SURFACE_SOURCES_MAX),
+            ),
+            status: RwLock::new(None),
         })
     }
 
@@ -90,8 +97,35 @@ impl Engine {
         *current = Arc::new(next);
     }
 
-    pub fn apply(&self, status: &DaemonStatus, source_slots: usize) {
-        *self.snapshot.write().unwrap() = Arc::new(build(status, source_slots));
+    pub fn apply(&self, status: DaemonStatus) {
+        // Hold the split while rebuilding so a concurrent split change cannot
+        // publish a snapshot built with the previous slot count.
+        let source_slots = self.source_slots.read().unwrap();
+        let snapshot = Arc::new(build(&status, *source_slots));
+        *self.status.write().unwrap() = Some(status);
+        *self.snapshot.write().unwrap() = snapshot;
+    }
+
+    pub fn set_source_slots(&self, source_slots: usize) {
+        let source_slots = source_slots.clamp(SURFACE_SOURCES_MIN, SURFACE_SOURCES_MAX);
+        {
+            let mut current = self.source_slots.write().unwrap();
+            if *current == source_slots {
+                return;
+            }
+            *current = source_slots;
+        }
+        let status = self.status.read().unwrap().clone();
+        if let Some(status) = status {
+            let connected = self.snapshot.read().unwrap().connected;
+            let mut next = build(&status, source_slots);
+            next.connected = connected;
+            *self.snapshot.write().unwrap() = Arc::new(next);
+        }
+    }
+
+    pub fn source_slots(&self) -> usize {
+        *self.source_slots.read().unwrap()
     }
 
     pub fn set_meter(&self, id: Ulid, percent: u8) {
@@ -321,4 +355,21 @@ fn ordered_ids(
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn source_slots_clamp_and_change() {
+        let engine = Engine::new(6);
+        assert_eq!(engine.source_slots(), 6);
+        engine.set_source_slots(4);
+        assert_eq!(engine.source_slots(), 4);
+        engine.set_source_slots(2);
+        assert_eq!(engine.source_slots(), 4);
+        engine.set_source_slots(9);
+        assert_eq!(engine.source_slots(), 8);
+    }
 }

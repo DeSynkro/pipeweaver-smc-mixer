@@ -68,10 +68,9 @@ async fn main() -> Result<()> {
         });
     }
 
-    let engine = Engine::new();
+    let engine = Engine::new(initial.surface_sources);
     let (command_tx, command_rx) = tokio::sync::mpsc::channel(128);
     {
-        let source_slots = initial.surface_sources;
         let (broadcast_tx, mut broadcast_rx) = tokio::sync::broadcast::channel(10);
         let stop_handler = spawn_pipeweaver_handler(command_rx, broadcast_tx).await;
         let engine = engine.clone();
@@ -88,7 +87,7 @@ async fn main() -> Result<()> {
                     }
                     BroadcastMessage::Status(status) => {
                         engine.set_connected(true);
-                        engine.apply(&status, source_slots);
+                        engine.apply(*status);
                     }
                 }
             }

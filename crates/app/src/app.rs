@@ -7,7 +7,10 @@ use egui::{
 use pipeweaver_smc_core::config::Config;
 use pipeweaver_ipc::commands::{APICommand, DaemonRequest};
 use pipeweaver_shared::{Mix, MuteState, MuteTarget};
-use pipeweaver_smc_core::{Channel, ChannelKind, Engine, Snapshot, STRIP_COUNT};
+use pipeweaver_smc_core::{
+    Channel, ChannelKind, Engine, Snapshot, STRIP_COUNT, SURFACE_SOURCES_DEFAULT,
+    SURFACE_SOURCES_MAX, SURFACE_SOURCES_MIN,
+};
 use tokio::sync::mpsc::Sender;
 use ulid::Ulid;
 use crate::midi::Link;
@@ -126,6 +129,16 @@ impl SmcApp {
         if let Err(error) = self.config.save(&self.config_path) {
             log::warn!("Could not save config: {error:#}");
         }
+    }
+
+    fn set_split(&mut self, slots: usize) {
+        let slots = slots.clamp(SURFACE_SOURCES_MIN, SURFACE_SOURCES_MAX);
+        if slots == self.engine.source_slots() {
+            return;
+        }
+        self.config.surface_sources = slots;
+        self.engine.set_source_slots(slots);
+        self.save_config();
     }
 
     /// Move after a resize has been acknowledged. Sending both in one frame
@@ -875,6 +888,7 @@ impl SmcApp {
             self.drawer_open = !self.drawer_open;
         }
 
+        let mut requested_split = None;
         if t > 0.01 {
             let count = snapshot.off_surface.len() as f32;
             let card_width = 180.0;
@@ -896,6 +910,13 @@ impl SmcApp {
                 StrokeKind::Inside,
             );
             let header_painter = painter.with_clip_rect(drawer);
+            let button = 20.0;
+            let gap_x = 5.0;
+            let surface_w = 48.0;
+            let ratio_w = 42.0;
+            let row_w = surface_w + gap_x + button + gap_x + ratio_w + gap_x + button;
+            let row_left = right - padding - row_w;
+
             header_painter.text(
                 pos2(left + padding, top + 24.0),
                 Align2::LEFT_CENTER,
@@ -903,13 +924,104 @@ impl SmcApp {
                 FontId::proportional(18.0),
                 palette.text,
             );
-            header_painter.text(
+            let subtitle_clip = Rect::from_min_max(
+                pos2(left + padding, top + 38.0),
+                pos2((row_left - 10.0).max(left + padding + 1.0), top + 54.0),
+            )
+            .intersect(drawer);
+            painter.with_clip_rect(subtitle_clip).text(
                 pos2(left + padding, top + 46.0),
                 Align2::LEFT_CENTER,
                 "Channels not on the eight strips. Mouse control only.",
                 FontId::proportional(10.5),
                 palette.dim,
             );
+
+            {
+                let current = self.engine.source_slots();
+                let cy = top + 43.5;
+                let surface_rect =
+                    Rect::from_min_size(pos2(row_left, cy - 8.0), vec2(surface_w, 16.0));
+                let dec = Rect::from_center_size(
+                    pos2(row_left + surface_w + gap_x + button * 0.5, cy),
+                    vec2(button, button),
+                );
+                let ratio = Rect::from_center_size(
+                    pos2(
+                        row_left + surface_w + gap_x + button + gap_x + ratio_w * 0.5,
+                        cy,
+                    ),
+                    vec2(ratio_w, 18.0),
+                );
+                let inc = Rect::from_center_size(
+                    pos2(
+                        row_left
+                            + surface_w
+                            + gap_x
+                            + button
+                            + gap_x
+                            + ratio_w
+                            + gap_x
+                            + button * 0.5,
+                        cy,
+                    ),
+                    vec2(button, button),
+                );
+
+                header_painter.text(
+                    surface_rect.center(),
+                    Align2::CENTER_CENTER,
+                    "SURFACE",
+                    FontId::proportional(9.0),
+                    palette.dim,
+                );
+
+                let dec_response = ui.interact(dec, Id::unique(("split-dec",)), Sense::click());
+                let inc_response = ui.interact(inc, Id::unique(("split-inc",)), Sense::click());
+                let ratio_response =
+                    ui.interact(ratio, Id::unique(("split-reset",)), Sense::click());
+
+                split_button(
+                    &header_painter,
+                    dec,
+                    "<",
+                    current > SURFACE_SOURCES_MIN,
+                    palette,
+                );
+                split_button(
+                    &header_painter,
+                    inc,
+                    ">",
+                    current < SURFACE_SOURCES_MAX,
+                    palette,
+                );
+
+                if ratio_response.hovered() {
+                    header_painter.rect_filled(
+                        ratio,
+                        egui::CornerRadius::same(5),
+                        palette.card_hover,
+                    );
+                }
+                header_painter.text(
+                    ratio.center(),
+                    Align2::CENTER_CENTER,
+                    format!("{current} / {}", STRIP_COUNT - current),
+                    FontId::proportional(12.0),
+                    palette.text,
+                );
+
+                if t >= 0.99 && dec_response.clicked() && current > SURFACE_SOURCES_MIN {
+                    requested_split = Some(current - 1);
+                }
+                if t >= 0.99 && inc_response.clicked() && current < SURFACE_SOURCES_MAX {
+                    requested_split = Some(current + 1);
+                }
+                if t >= 0.99 && ratio_response.clicked() {
+                    requested_split = Some(SURFACE_SOURCES_DEFAULT);
+                }
+                let _ = ratio_response.on_hover_text("Sources / targets. Click to reset to 6 / 2.");
+            }
 
             let inner = Rect::from_min_max(
                 pos2(left + padding, top + 60.0),
@@ -942,6 +1054,10 @@ impl SmcApp {
                         });
                 },
             );
+        }
+
+        if let Some(slots) = requested_split {
+            self.set_split(slots);
         }
 
         draw_tab(
@@ -1501,6 +1617,44 @@ fn link_button(
         Stroke::new(1.4, colour),
     );
     response.clicked()
+}
+
+fn split_button(
+    painter: &egui::Painter,
+    rect: Rect,
+    label: &str,
+    enabled: bool,
+    palette: &theme::Palette,
+) {
+    let fill = if enabled {
+        palette.card_hover
+    } else {
+        palette.card
+    };
+    let border = if enabled {
+        palette.border
+    } else {
+        palette.border.gamma_multiply(0.4)
+    };
+    let text = if enabled {
+        palette.text
+    } else {
+        palette.dim.gamma_multiply(0.6)
+    };
+    painter.rect_filled(rect, egui::CornerRadius::same(5), fill);
+    painter.rect_stroke(
+        rect,
+        egui::CornerRadius::same(5),
+        Stroke::new(1.0, border),
+        StrokeKind::Inside,
+    );
+    painter.text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        label,
+        FontId::proportional(11.0),
+        text,
+    );
 }
 
 fn draw_tab(
