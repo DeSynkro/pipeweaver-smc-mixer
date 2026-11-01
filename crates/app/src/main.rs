@@ -70,8 +70,14 @@ async fn main() -> Result<()> {
     }
 
     let engine = Engine::new(initial.surface_sources);
+    let mic_muted = Arc::new(AtomicBool::new(false));
     let (media_tx, media_rx) = tokio::sync::mpsc::unbounded_channel();
-    tokio::spawn(media::run(media_rx, ui_on.clone(), focus.clone()));
+    tokio::spawn(media::run(
+        media_rx,
+        ui_on.clone(),
+        focus.clone(),
+        mic_muted.clone(),
+    ));
     let (command_tx, command_rx) = tokio::sync::mpsc::channel(128);
     {
         let (broadcast_tx, mut broadcast_rx) = tokio::sync::broadcast::channel(10);
@@ -98,6 +104,7 @@ async fn main() -> Result<()> {
     }
     let swap = Arc::new(AtomicU8::new(0));
     let pickup = Arc::new(AtomicBool::new(initial.pickup));
+    let record_hex = Arc::new(AtomicBool::new(initial.record_hex));
     let ui_commands = command_tx.clone();
     {
         let config = initial.clone();
@@ -107,6 +114,7 @@ async fn main() -> Result<()> {
         let midi_media = media_tx.clone();
         let midi_ui_on = ui_on.clone();
         let midi_focus = focus.clone();
+        let midi_record_hex = record_hex.clone();
         std::thread::spawn(move || {
             midi::run_controls(
                 config,
@@ -117,6 +125,7 @@ async fn main() -> Result<()> {
                 midi_media,
                 midi_ui_on,
                 midi_focus,
+                midi_record_hex,
             )
         });
     }
@@ -138,6 +147,8 @@ async fn main() -> Result<()> {
             let pickup = pickup.clone();
             let ui_commands = ui_commands.clone();
             let media_tx = media_tx.clone();
+            let record_hex = record_hex.clone();
+            let mic_muted = mic_muted.clone();
 
             eframe::run_native(
                 theme::APP_NAME,
@@ -160,6 +171,8 @@ async fn main() -> Result<()> {
                         pickup,
                         ui_commands,
                         media_tx,
+                        record_hex,
+                        mic_muted,
                     )))
                 }),
             )?;

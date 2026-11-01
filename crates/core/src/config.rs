@@ -32,6 +32,10 @@ fn default_pickup() -> bool {
     true
 }
 
+fn default_record_hex() -> bool {
+    true
+}
+
 fn default_schema() -> u32 {
     1
 }
@@ -48,6 +52,10 @@ pub struct Config {
     pub channel_colours: bool,
     #[serde(default = "default_pickup")]
     pub pickup: bool,
+    #[serde(default)]
+    pub hide_off_surface: bool,
+    #[serde(default = "default_record_hex")]
+    pub record_hex: bool,
     pub start_minimized: bool,
     pub window_width: f32,
     pub schema: u32,
@@ -63,6 +71,8 @@ impl Default for Config {
             light_panel: false,
             channel_colours: false,
             pickup: default_pickup(),
+            hide_off_surface: false,
+            record_hex: default_record_hex(),
             start_minimized: false,
             window_width: default_width(),
             schema: default_schema(),

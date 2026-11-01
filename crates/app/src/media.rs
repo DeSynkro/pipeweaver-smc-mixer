@@ -16,13 +16,18 @@ pub enum MediaCommand {
     ToggleApp,
     HexStart,
     HexStop,
+    ToggleMicMute,
 }
 
 pub async fn run(
     mut rx: UnboundedReceiver<MediaCommand>,
     ui_on: Arc<AtomicBool>,
     focus: Arc<AtomicBool>,
+    mic_muted: Arc<AtomicBool>,
 ) {
+    if let Some(state) = query_mic_mute() {
+        mic_muted.store(state, Ordering::Relaxed);
+    }
     while let Some(command) = rx.recv().await {
         let result = match command {
             MediaCommand::OpenPipeweaver => open_pipeweaver(),
@@ -35,6 +40,7 @@ pub async fn run(
             }
             MediaCommand::HexStart => hex_dictation("start"),
             MediaCommand::HexStop => hex_dictation("stop"),
+            MediaCommand::ToggleMicMute => toggle_mic_mute(&mic_muted),
             MediaCommand::Play
             | MediaCommand::Pause
             | MediaCommand::Previous
@@ -54,6 +60,51 @@ fn open_pipeweaver() -> Result<()> {
         .spawn()
         .context("open the Pipeweaver UI")?;
     Ok(())
+}
+
+fn toggle_mic_mute(muted: &AtomicBool) -> Result<()> {
+    let toggled = std::process::Command::new("wpctl")
+        .args(["set-mute", "@DEFAULT_AUDIO_SOURCE@", "toggle"])
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false);
+    if !toggled {
+        let status = std::process::Command::new("pactl")
+            .args(["set-source-mute", "@DEFAULT_SOURCE@", "toggle"])
+            .status()
+            .context("toggle the default microphone mute")?;
+        if !status.success() {
+            anyhow::bail!("could not toggle the default microphone mute");
+        }
+    }
+    if let Some(state) = query_mic_mute() {
+        muted.store(state, Ordering::Relaxed);
+    }
+    Ok(())
+}
+
+fn query_mic_mute() -> Option<bool> {
+    if let Ok(output) = std::process::Command::new("wpctl")
+        .args(["get-volume", "@DEFAULT_AUDIO_SOURCE@"])
+        .output()
+    {
+        if output.status.success() {
+            return Some(String::from_utf8_lossy(&output.stdout).contains("[MUTED]"));
+        }
+    }
+    if let Ok(output) = std::process::Command::new("pactl")
+        .args(["get-source-mute", "@DEFAULT_SOURCE@"])
+        .output()
+    {
+        if output.status.success() {
+            return Some(
+                String::from_utf8_lossy(&output.stdout)
+                    .to_ascii_lowercase()
+                    .contains("yes"),
+            );
+        }
+    }
+    None
 }
 
 fn hex_dictation(action: &str) -> Result<()> {
@@ -108,6 +159,7 @@ async fn send_media(command: MediaCommand) -> Result<()> {
         MediaCommand::SeekForward => proxy.call_method("Seek", &(5_000_000i64)).await,
         MediaCommand::OpenPipeweaver | MediaCommand::ToggleApp => unreachable!(),
         MediaCommand::HexStart | MediaCommand::HexStop => unreachable!(),
+        MediaCommand::ToggleMicMute => unreachable!(),
     };
     result.with_context(|| format!("media command on {name}"))?;
     Ok(())

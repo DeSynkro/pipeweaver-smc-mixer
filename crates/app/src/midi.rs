@@ -165,6 +165,7 @@ pub fn run_controls(
     media: UnboundedSender<MediaCommand>,
     ui_on: Arc<AtomicBool>,
     focus: Arc<AtomicBool>,
+    record_hex: Arc<AtomicBool>,
 ) {
     let callback_engine = engine.clone();
     let callback_commands = commands.clone();
@@ -173,9 +174,11 @@ pub fn run_controls(
     let callback_media = media.clone();
     let callback_ui_on = ui_on.clone();
     let callback_focus = focus.clone();
+    let callback_record_hex = record_hex.clone();
     let mut pickup_state = PickupState::default();
     let mut pickup_was = false;
     let mut pressed = [false; 128];
+    let mut hex_active = false;
 
     let callback = move |message: &[u8]| {
         if message.len() < 3 || message[0] & 0xF0 != 0xB0 {
@@ -212,6 +215,8 @@ pub fn run_controls(
                     &callback_engine,
                     &callback_ui_on,
                     &callback_focus,
+                    &callback_record_hex,
+                    &mut hex_active,
                 );
             }
             64..=95 => {
@@ -266,9 +271,13 @@ fn handle_transport(
     engine: &Arc<Engine>,
     ui_on: &Arc<AtomicBool>,
     focus: &Arc<AtomicBool>,
+    record_hex: &Arc<AtomicBool>,
+    hex_active: &mut bool,
 ) {
+    let hex = record_hex.load(Ordering::Relaxed);
     if !down {
-        if control == 54 {
+        if control == 54 && *hex_active {
+            *hex_active = false;
             let _ = media.send(MediaCommand::HexStop);
         }
         return;
@@ -281,7 +290,12 @@ fn handle_transport(
             let _ = media.send(MediaCommand::Pause);
         }
         54 => {
-            let _ = media.send(MediaCommand::HexStart);
+            if hex {
+                *hex_active = true;
+                let _ = media.send(MediaCommand::HexStart);
+            } else {
+                let _ = media.send(MediaCommand::ToggleMicMute);
+            }
         }
         55 => {
             let _ = media.send(MediaCommand::SeekBack);

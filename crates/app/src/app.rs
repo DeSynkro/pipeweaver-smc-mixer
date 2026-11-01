@@ -66,6 +66,8 @@ pub struct SmcApp {
     drawer_t: f32,
     reversed: HashSet<Ulid>,
     media_tx: tokio::sync::mpsc::UnboundedSender<MediaCommand>,
+    record_hex: Arc<AtomicBool>,
+    mic_muted: Arc<AtomicBool>,
     record_down: bool,
     window_width: f32,
     restore_width: f32,
@@ -92,6 +94,8 @@ impl SmcApp {
         pickup_net: Arc<AtomicBool>,
         commands: Sender<DaemonRequest>,
         media_tx: tokio::sync::mpsc::UnboundedSender<MediaCommand>,
+        record_hex: Arc<AtomicBool>,
+        mic_muted: Arc<AtomicBool>,
     ) -> Self {
         let window_width = config.window_width();
         Self {
@@ -112,6 +116,8 @@ impl SmcApp {
             drawer_t: 0.0,
             reversed: HashSet::new(),
             media_tx,
+            record_hex,
+            mic_muted,
             record_down: false,
             window_width,
             restore_width: window_width,
@@ -456,6 +462,13 @@ impl SmcApp {
     }
 
     fn paint_transport(&mut self, ui: &mut egui::Ui, map: &Map) {
+        if self.screen == Screen::Config {
+            if self.record_down {
+                self.record_down = false;
+                let _ = self.media_tx.send(MediaCommand::HexStop);
+            }
+            return;
+        }
         if self.drawer_t > 0.01 {
             if self.record_down {
                 self.record_down = false;
@@ -463,6 +476,7 @@ impl SmcApp {
             }
             return;
         }
+        let palette = theme::palette(self.config.light_panel);
         let hover = if self.config.light_panel {
             Color32::from_black_alpha(10)
         } else {
@@ -490,10 +504,34 @@ impl SmcApp {
             if response.is_pointer_button_down_on() {
                 ui.painter().rect_filled(rect, map.radius(9.0), active);
             }
+            if index == 2
+                && !self.record_hex.load(Ordering::Relaxed)
+                && self.mic_muted.load(Ordering::Relaxed)
+            {
+                ui.painter().rect_filled(
+                    rect,
+                    map.radius(9.0),
+                    palette.red.gamma_multiply(0.22),
+                );
+                ui.painter().rect_stroke(
+                    rect,
+                    map.radius(9.0),
+                    Stroke::new(1.5, palette.red),
+                    StrokeKind::Inside,
+                );
+            }
             let tooltip = match index {
                 0 => "Play",
                 1 => "Pause",
-                2 => "Hold to dictate with Hex",
+                2 => {
+                    if self.record_hex.load(Ordering::Relaxed) {
+                        "Hold to dictate with Hex"
+                    } else if self.mic_muted.load(Ordering::Relaxed) {
+                        "Microphone muted - press to unmute"
+                    } else {
+                        "Microphone live - press to mute"
+                    }
+                }
                 3 => "Seek back 5 seconds",
                 4 => "Seek forward 5 seconds",
                 5 => "Previous track",
@@ -516,13 +554,23 @@ impl SmcApp {
                     }
                 }
                 2 => {
-                    let down = response.is_pointer_button_down_on();
-                    if down && !self.record_down {
-                        self.record_down = true;
-                        let _ = self.media_tx.send(MediaCommand::HexStart);
-                    } else if !down && self.record_down {
-                        self.record_down = false;
-                        let _ = self.media_tx.send(MediaCommand::HexStop);
+                    if self.record_hex.load(Ordering::Relaxed) {
+                        let down = response.is_pointer_button_down_on();
+                        if down && !self.record_down {
+                            self.record_down = true;
+                            let _ = self.media_tx.send(MediaCommand::HexStart);
+                        } else if !down && self.record_down {
+                            self.record_down = false;
+                            let _ = self.media_tx.send(MediaCommand::HexStop);
+                        }
+                    } else {
+                        if self.record_down {
+                            self.record_down = false;
+                            let _ = self.media_tx.send(MediaCommand::HexStop);
+                        }
+                        if response.clicked() {
+                            let _ = self.media_tx.send(MediaCommand::ToggleMicMute);
+                        }
                     }
                 }
                 3 => {
@@ -806,6 +854,7 @@ impl SmcApp {
         ctx: &Context,
         monitor: Option<Rect>,
     ) {
+        ctx.request_repaint_after(Duration::from_millis(16));
         let palette = theme::palette(self.config.light_panel);
         let panel = map.rect(theme::config_panel());
         let painter = ui.painter();
@@ -822,6 +871,8 @@ impl SmcApp {
         let mut light = self.config.light_panel;
         let mut pickup = self.pickup_net.load(Ordering::Relaxed);
         let mut channel_colours = self.config.channel_colours;
+        let mut hide_off_surface = self.config.hide_off_surface;
+        let mut record_hex = self.record_hex.load(Ordering::Relaxed);
         let mut reset = false;
         let heading = (34.0 * map.scale).max(22.0);
         let label = (16.0 * map.scale).max(12.0);
@@ -880,6 +931,22 @@ impl SmcApp {
 
                     columns[0].add_space(12.0);
                     columns[0].label(
+                        RichText::new("Surface")
+                            .size(section)
+                            .strong()
+                            .color(palette.text),
+                    );
+                    columns[0].checkbox(&mut hide_off_surface, "Hide off-surface tray");
+                    columns[0].label(
+                        RichText::new(
+                            "Hides the drawer and its tab. Off-surface channels can still be changed in Pipeweaver.",
+                        )
+                        .size(label)
+                        .color(palette.dim),
+                    );
+
+                    columns[0].add_space(12.0);
+                    columns[0].label(
                         RichText::new("Window")
                             .size(section)
                             .strong()
@@ -899,6 +966,34 @@ impl SmcApp {
                         reset = true;
                     }
 
+                    columns[1].label(
+                        RichText::new("Features")
+                            .size(section)
+                            .strong()
+                            .color(palette.text),
+                    );
+                    columns[1].horizontal(|ui| {
+                        ui.checkbox(&mut record_hex, "Record button switches to");
+                        ui.hyperlink_to("Hex", "https://github.com/anomalyco/hex");
+                    });
+                    columns[1].label(
+                        RichText::new(
+                            "On: hold the record button to dictate with Hex. Off: press to mute or unmute the default microphone.",
+                        )
+                        .size(label)
+                        .color(palette.dim),
+                    );
+                    let mic_muted = self.mic_muted.load(Ordering::Relaxed);
+                    columns[1].label(
+                        RichText::new(format!(
+                            "Default microphone: {}",
+                            if mic_muted { "muted" } else { "live" }
+                        ))
+                        .size(label)
+                        .color(if mic_muted { palette.red } else { palette.dim }),
+                    );
+
+                    columns[1].add_space(12.0);
                     columns[1].label(
                         RichText::new("Status")
                             .size(section)
@@ -939,11 +1034,43 @@ impl SmcApp {
                         .size(label)
                         .color(palette.text),
                     );
-                    columns[1].label(
-                        RichText::new("Shell milestone")
-                            .size(label)
-                            .color(palette.dim),
-                    );
+                    let time = ctx.input(|input| input.time) as f32;
+                    let phase = (time / 1.6).fract();
+                    let bump = |centre: f32, width: f32| {
+                        let distance = (phase - centre).abs();
+                        if distance >= width {
+                            0.0
+                        } else {
+                            0.5 + 0.5 * (distance / width * std::f32::consts::PI).cos()
+                        }
+                    };
+                    let pulse = (bump(0.22, 0.18) + 0.5 * bump(0.52, 0.14)).min(1.0);
+                    let eased = pulse * pulse * (3.0 - 2.0 * pulse);
+                    let heart_size = ((13.0 + 2.4 * eased) * map.scale).max(9.0);
+                    columns[1].horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0 * map.scale;
+                        ui.label(
+                            RichText::new("BUILT WITH")
+                                .size(label)
+                                .color(palette.dim),
+                        );
+                        let (rect, _) = ui.allocate_exact_size(
+                            vec2(18.0 * map.scale, 18.0 * map.scale),
+                            Sense::hover(),
+                        );
+                        ui.painter().text(
+                            rect.center(),
+                            Align2::CENTER_CENTER,
+                            "♥",
+                            FontId::proportional(heart_size),
+                            palette.red,
+                        );
+                        ui.label(
+                            RichText::new("BY DESYNKRO")
+                                .size(label)
+                                .color(palette.dim),
+                        );
+                    });
                 });
             },
         );
@@ -962,12 +1089,34 @@ impl SmcApp {
             self.config.channel_colours = channel_colours;
             self.save_config();
         }
+        if hide_off_surface != self.config.hide_off_surface {
+            self.config.hide_off_surface = hide_off_surface;
+            if hide_off_surface {
+                self.drawer_open = false;
+                self.drawer_t = 0.0;
+            }
+            self.save_config();
+        }
+        if record_hex != self.record_hex.load(Ordering::Relaxed) {
+            self.record_hex.store(record_hex, Ordering::Relaxed);
+            self.config.record_hex = record_hex;
+            if !record_hex && self.record_down {
+                self.record_down = false;
+                let _ = self.media_tx.send(MediaCommand::HexStop);
+            }
+            self.save_config();
+        }
         if reset {
             self.set_window_width(1280.0, ctx, monitor);
         }
     }
 
     fn paint_drawer(&mut self, ui: &mut egui::Ui, snapshot: &Snapshot) {
+        if self.config.hide_off_surface {
+            self.drawer_open = false;
+            self.drawer_t = 0.0;
+            return;
+        }
         let palette = theme::palette(self.config.light_panel);
         let sources = snapshot
             .off_surface
