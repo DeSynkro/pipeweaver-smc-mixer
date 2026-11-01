@@ -6,6 +6,7 @@ use pipeweaver_shared::{Mix, MuteState, MuteTarget};
 use pipeweaver_smc_core::config::{Config, MidiMode};
 use pipeweaver_smc_core::engine::{ChannelKind, Engine, Snapshot};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::Duration;
 use tokio::sync::mpsc::Sender;
 
@@ -153,9 +154,15 @@ fn open_output(config: &Config) -> Option<MidiOutputConnection> {
     output.connect(&port, "pipeweaver-smc-mixer").ok()
 }
 
-pub fn run_controls(config: Config, engine: Arc<Engine>, commands: Sender<DaemonRequest>) {
+pub fn run_controls(
+    config: Config,
+    engine: Arc<Engine>,
+    commands: Sender<DaemonRequest>,
+    swap: Arc<AtomicU8>,
+) {
     let callback_engine = engine.clone();
     let callback_commands = commands.clone();
+    let callback_swap = swap.clone();
     let mut pressed = [false; 128];
 
     let callback = move |message: &[u8]| {
@@ -166,15 +173,15 @@ pub fn run_controls(config: Config, engine: Arc<Engine>, commands: Sender<Daemon
         let value = message[2];
 
         match control {
-            30..=47 => handle_axis(control, value, &callback_engine, &callback_commands),
-            64..=87 => {
+            30..=47 => handle_axis(control, value, &callback_engine, &callback_commands, &callback_swap),
+            64..=95 => {
                 let down = value > 64;
                 if pressed[control as usize] == down {
                     return;
                 }
                 pressed[control as usize] = down;
                 if down {
-                    handle_button(control, &callback_engine, &callback_commands);
+                    handle_button(control, &callback_engine, &callback_commands, &callback_swap);
                 }
             }
             _ => {}
@@ -200,16 +207,22 @@ pub fn run_controls(config: Config, engine: Arc<Engine>, commands: Sender<Daemon
     loop {
         if let Some(output) = output.as_mut() {
             let snapshot = engine.snapshot();
-            send_leds(output, &snapshot, &mut leds);
+            send_leds(output, &snapshot, &swap, &mut leds);
         }
         std::thread::sleep(Duration::from_millis(50));
     }
 }
 
-fn handle_axis(control: u8, value: u8, engine: &Engine, commands: &Sender<DaemonRequest>) {
-    let (index, mix) = match control {
-        40..=47 => ((control - 40) as usize, Mix::A),
-        30..=37 => ((control - 30) as usize, Mix::B),
+fn handle_axis(
+    control: u8,
+    value: u8,
+    engine: &Engine,
+    commands: &Sender<DaemonRequest>,
+    swap: &AtomicU8,
+) {
+    let (index, is_knob) = match control {
+        40..=47 => ((control - 40) as usize, false),
+        30..=37 => ((control - 30) as usize, true),
         _ => return,
     };
 
@@ -220,10 +233,23 @@ fn handle_axis(control: u8, value: u8, engine: &Engine, commands: &Sender<Daemon
     if !channel.assigned {
         return;
     }
+    if channel.kind == ChannelKind::Target && is_knob {
+        return;
+    }
 
     let percent = ((value as u16 * 100 + 63) / 127) as u8;
     let request = match channel.kind {
         ChannelKind::Source => {
+            if is_knob && channel.linked {
+                return;
+            }
+            let swapped = swap.load(Ordering::Relaxed) & (1 << index) != 0;
+            let mix = match (is_knob, swapped) {
+                (false, false) => Mix::A,
+                (false, true) => Mix::B,
+                (true, false) => Mix::B,
+                (true, true) => Mix::A,
+            };
             DaemonRequest::Pipewire(APICommand::SetSourceVolume(channel.id, mix, percent))
         }
         ChannelKind::Target => {
@@ -233,11 +259,17 @@ fn handle_axis(control: u8, value: u8, engine: &Engine, commands: &Sender<Daemon
     let _ = commands.try_send(request);
 }
 
-fn handle_button(control: u8, engine: &Engine, commands: &Sender<DaemonRequest>) {
+fn handle_button(
+    control: u8,
+    engine: &Engine,
+    commands: &Sender<DaemonRequest>,
+    swap: &AtomicU8,
+) {
     let index = match control {
         64..=71 => (control - 64) as usize,
         72..=79 => (control - 72) as usize,
         80..=87 => (control - 80) as usize,
+        88..=95 => (control - 88) as usize,
         _ => return,
     };
 
@@ -246,6 +278,11 @@ fn handle_button(control: u8, engine: &Engine, commands: &Sender<DaemonRequest>)
         return;
     };
     if !channel.assigned {
+        return;
+    }
+
+    if control / 8 == 10 && channel.kind == ChannelKind::Source {
+        swap.fetch_xor(1 << index, Ordering::Relaxed);
         return;
     }
 
@@ -286,13 +323,22 @@ fn handle_button(control: u8, engine: &Engine, commands: &Sender<DaemonRequest>)
             }
             DaemonRequest::Pipewire(APICommand::SetTargetMix(channel.id, Mix::B))
         }
+        (11, ChannelKind::Source) => DaemonRequest::Pipewire(
+            APICommand::SetSourceVolumeLinked(channel.id, !channel.linked),
+        ),
         _ => return,
     };
 
     let _ = commands.try_send(request);
 }
 
-fn send_leds(output: &mut MidiOutputConnection, snapshot: &Snapshot, last: &mut [u8; 32]) {
+fn send_leds(
+    output: &mut MidiOutputConnection,
+    snapshot: &Snapshot,
+    swap: &AtomicU8,
+    last: &mut [u8; 32],
+) {
+    let swapped = swap.load(Ordering::Relaxed);
     let mut desired = [LED_OFF; 32];
     for (index, channel) in snapshot.channels.iter().enumerate().take(8) {
         if !channel.assigned {
@@ -305,7 +351,12 @@ fn send_leds(output: &mut MidiOutputConnection, snapshot: &Snapshot, last: &mut 
             _ => LED_OFF,
         };
         desired[index] = match channel.kind {
+            ChannelKind::Source if swapped & (1 << index) != 0 => LED_ON,
             ChannelKind::Target if channel.mix_b => LED_ON,
+            _ => LED_OFF,
+        };
+        desired[24 + index] = match channel.kind {
+            ChannelKind::Source if !channel.linked => LED_ON,
             _ => LED_OFF,
         };
     }

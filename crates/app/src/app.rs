@@ -5,7 +5,7 @@ use egui::{
     StrokeKind, UiBuilder, Vec2, ViewportCommand, pos2, vec2,
 };
 use pipeweaver_smc_core::config::Config;
-use pipeweaver_smc_core::{Engine, Snapshot, STRIP_COUNT};
+use pipeweaver_smc_core::{ChannelKind, Engine, Snapshot, STRIP_COUNT};
 use crate::midi::Link;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -50,6 +50,7 @@ pub struct SmcApp {
     engine: Arc<Engine>,
     midi: Link,
     midi_net: Arc<AtomicU8>,
+    swap: Arc<AtomicU8>,
     window_width: f32,
     restore_width: f32,
     restore_pos: Option<egui::Pos2>,
@@ -71,6 +72,7 @@ impl SmcApp {
         focus: Arc<AtomicBool>,
         engine: Arc<Engine>,
         midi_net: Arc<AtomicU8>,
+        swap: Arc<AtomicU8>,
     ) -> Self {
         let window_width = config.window_width();
         Self {
@@ -84,6 +86,7 @@ impl SmcApp {
             engine,
             midi: Link::Offline,
             midi_net,
+            swap,
             window_width,
             restore_width: window_width,
             restore_pos: None,
@@ -199,11 +202,20 @@ impl SmcApp {
         let palette = theme::palette(self.config.light_panel);
         let painter = ui.painter();
         let text_size = (8.5 * map.scale).max(6.0);
+        let swapped = self.swap.load(Ordering::Relaxed);
 
         for (index, channel) in snapshot.channels.iter().enumerate().take(STRIP_COUNT) {
             if !channel.assigned {
                 continue;
             }
+
+            let is_swapped =
+                channel.kind == ChannelKind::Source && swapped & (1 << index) != 0;
+            let (fader, knob) = if is_swapped {
+                (channel.knob, channel.fader)
+            } else {
+                (channel.fader, channel.knob)
+            };
 
             let base = 100.5 + 215.0 * index as f32;
             let colour = if channel.mute_a {
@@ -231,7 +243,7 @@ impl SmcApp {
 
             let slot_top = 350.0;
             let slot_height = 451.0;
-            let y = slot_top + (1.0 - channel.fader as f32 / 100.0) * slot_height;
+            let y = slot_top + (1.0 - fader as f32 / 100.0) * slot_height;
             let cap = Rect::from_center_size(
                 map.point(base + 51.0, y),
                 map.size(vec2(54.0, 13.0)),
@@ -244,7 +256,7 @@ impl SmcApp {
                 StrokeKind::Inside,
             );
 
-            let angle = (-135.0 + 270.0 * channel.knob as f32 / 100.0).to_radians();
+            let angle = (-135.0 + 270.0 * knob as f32 / 100.0).to_radians();
             let centre = map.point(base + 51.5, 170.0);
             let direction = vec2(angle.sin(), -angle.cos());
             painter.line_segment(
