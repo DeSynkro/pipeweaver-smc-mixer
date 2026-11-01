@@ -173,9 +173,12 @@ pub fn run_controls(
     last_midi: Arc<AtomicU64>,
     led_test: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
+    startup_animation: Arc<AtomicBool>,
+    animation_preview: Arc<AtomicBool>,
 ) {
     let config_path = Config::path();
     let mut config = config;
+    let mut startup_played = false;
 
     loop {
         if stop.load(Ordering::Relaxed) {
@@ -277,6 +280,8 @@ pub fn run_controls(
         log::info!("MIDI control connected: {} ({:?})", port.name, port.link);
 
         let mut leds = [u8::MAX; 32];
+        let mut animation_active = !startup_played && startup_animation.load(Ordering::Relaxed);
+        let mut animation_elapsed = 0u64;
         let mut test_frames = 0u8;
         let mut last_check = Instant::now();
         let mut last_link = midi_link.load(Ordering::Relaxed);
@@ -289,15 +294,25 @@ pub fn run_controls(
                 }
                 return;
             }
-            if led_test.swap(false, Ordering::Relaxed) {
-                test_frames = 10;
+            if animation_preview.swap(false, Ordering::Relaxed) {
+                animation_active = true;
+                animation_elapsed = 0;
             }
-            if test_frames > 0 {
-                if let Some(output) = output.as_mut() {
-                    for note in 0..32 {
-                        let _ = output.send(&[0x90, note, 127]);
+            if animation_active {
+                animation_elapsed += 50;
+                if let Some(pattern) = startup_pattern(animation_elapsed) {
+                    if let Some(output) = output.as_mut() {
+                        send_pattern(output, &pattern, &mut leds);
                     }
-                    leds = [127; 32];
+                } else {
+                    animation_active = false;
+                    startup_played = true;
+                }
+            } else if led_test.swap(false, Ordering::Relaxed) {
+                test_frames = 10;
+            } else if test_frames > 0 {
+                if let Some(output) = output.as_mut() {
+                    send_pattern(output, &[LED_ON; 32], &mut leds);
                 }
                 test_frames -= 1;
             } else if let Some(output) = output.as_mut() {
@@ -667,12 +682,42 @@ fn send_leds(
         };
     }
 
+    send_pattern(output, &desired, last);
+}
+
+fn send_pattern(output: &mut MidiOutputConnection, desired: &[u8; 32], last: &mut [u8; 32]) {
     for (note, value) in desired.iter().enumerate() {
         if last[note] != *value {
             let _ = output.send(&[0x90, note as u8, *value]);
             last[note] = *value;
         }
     }
+}
+
+fn startup_pattern(elapsed_ms: u64) -> Option<[u8; 32]> {
+    let mut pattern = [LED_OFF; 32];
+    const COLUMN_MS: u64 = 100;
+    const COLUMNS: u64 = 8;
+    let fill = COLUMN_MS * COLUMNS;
+
+    if elapsed_ms < fill {
+        let columns = (elapsed_ms / COLUMN_MS + 1).min(COLUMNS) as usize;
+        for column in 0..columns {
+            for row in [0, 8, 16, 24] {
+                pattern[row + column] = LED_ON;
+            }
+        }
+        return Some(pattern);
+    }
+
+    match elapsed_ms - fill {
+        0..=149 => pattern.fill(LED_ON),
+        150..=249 => {}
+        250..=399 => pattern.fill(LED_ON),
+        400..=499 => {}
+        _ => return None,
+    }
+    Some(pattern)
 }
 
 #[cfg(test)]

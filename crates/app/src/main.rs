@@ -163,6 +163,8 @@ async fn main() -> Result<()> {
     let record_hex = Arc::new(AtomicBool::new(initial.record_hex));
     let last_midi = Arc::new(AtomicU64::new(0));
     let led_test = Arc::new(AtomicBool::new(false));
+    let startup_animation = Arc::new(AtomicBool::new(initial.startup_animation));
+    let animation_preview = Arc::new(AtomicBool::new(false));
     let ui_commands = command_tx.clone();
     let midi_handle = {
         let config = initial.clone();
@@ -178,6 +180,8 @@ async fn main() -> Result<()> {
         let midi_link = midi_link.clone();
         let midi_last_midi = last_midi.clone();
         let midi_led_test = led_test.clone();
+        let midi_startup_animation = startup_animation.clone();
+        let midi_animation_preview = animation_preview.clone();
         let midi_stop = stop.clone();
         std::thread::spawn(move || {
             midi::run_controls(
@@ -196,6 +200,8 @@ async fn main() -> Result<()> {
                 midi_last_midi,
                 midi_led_test,
                 midi_stop,
+                midi_startup_animation,
+                midi_animation_preview,
             )
         })
     };
@@ -222,6 +228,8 @@ async fn main() -> Result<()> {
             let minimized = minimized.clone();
             let last_midi = last_midi.clone();
             let led_test = led_test.clone();
+            let startup_animation = startup_animation.clone();
+            let animation_preview = animation_preview.clone();
 
             eframe::run_native(
                 theme::APP_NAME,
@@ -249,6 +257,8 @@ async fn main() -> Result<()> {
                         minimized,
                         last_midi,
                         led_test,
+                        startup_animation,
+                        animation_preview,
                     )))
                 }),
             )?;

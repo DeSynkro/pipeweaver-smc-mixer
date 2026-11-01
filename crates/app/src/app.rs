@@ -72,6 +72,8 @@ pub struct SmcApp {
     minimize_at: Option<Instant>,
     last_midi: Arc<AtomicU64>,
     led_test: Arc<AtomicBool>,
+    startup_animation: Arc<AtomicBool>,
+    animation_preview: Arc<AtomicBool>,
     record_down: bool,
     window_width: f32,
     restore_width: f32,
@@ -103,6 +105,8 @@ impl SmcApp {
         minimized: Arc<AtomicBool>,
         last_midi: Arc<AtomicU64>,
         led_test: Arc<AtomicBool>,
+        startup_animation: Arc<AtomicBool>,
+        animation_preview: Arc<AtomicBool>,
     ) -> Self {
         let window_width = config.window_width();
         Self {
@@ -129,6 +133,8 @@ impl SmcApp {
             minimize_at: None,
             last_midi,
             led_test,
+            startup_animation,
+            animation_preview,
             record_down: false,
             window_width,
             restore_width: window_width,
@@ -1121,6 +1127,7 @@ impl SmcApp {
         let mut hide_off_surface = self.config.hide_off_surface;
         let mut record_hex = self.record_hex.load(Ordering::Relaxed);
         let mut start_minimized = self.config.start_minimized;
+        let mut startup_animation = self.startup_animation.load(Ordering::Relaxed);
         let autostart_present = autostart_path().exists();
         let mut start_on_login = autostart_present;
         let mut reset = false;
@@ -1261,6 +1268,12 @@ impl SmcApp {
                     columns[0].checkbox(&mut start_minimized, "Start minimized");
                     columns[0].label(
                         RichText::new("Opens in the tray when launched.")
+                            .size(label)
+                            .color(palette.dim),
+                    );
+                    columns[0].checkbox(&mut startup_animation, "Startup animation");
+                    columns[0].label(
+                        RichText::new("Fills the LEDs once when the app starts.")
                             .size(label)
                             .color(palette.dim),
                     );
@@ -1447,15 +1460,26 @@ impl SmcApp {
                         )
                     };
                     columns[1].label(RichText::new(activity).size(label).color(palette.dim));
-                    if config_button(
-                        &mut columns[1],
-                        "Flash LEDs",
-                        map.scale,
-                        palette,
-                        palette.accent,
-                    ) {
-                        self.led_test.store(true, Ordering::Relaxed);
-                    }
+                    columns[1].horizontal(|ui| {
+                        if config_button(
+                            ui,
+                            "Flash LEDs",
+                            map.scale,
+                            palette,
+                            palette.accent,
+                        ) {
+                            self.led_test.store(true, Ordering::Relaxed);
+                        }
+                        if config_button(
+                            ui,
+                            "Preview animation",
+                            map.scale,
+                            palette,
+                            palette.accent,
+                        ) {
+                            self.animation_preview.store(true, Ordering::Relaxed);
+                        }
+                    });
                     let snapshot = self.engine.snapshot();
                     let swapped = self.swap.load(Ordering::Relaxed);
                     for (index, channel) in snapshot.channels.iter().enumerate() {
@@ -1593,6 +1617,12 @@ impl SmcApp {
         }
         if start_minimized != self.config.start_minimized {
             self.config.start_minimized = start_minimized;
+            self.save_config();
+        }
+        if startup_animation != self.startup_animation.load(Ordering::Relaxed) {
+            self.startup_animation
+                .store(startup_animation, Ordering::Relaxed);
+            self.config.startup_animation = startup_animation;
             self.save_config();
         }
         if start_on_login != autostart_present {
