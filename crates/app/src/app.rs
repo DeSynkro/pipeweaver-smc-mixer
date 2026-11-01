@@ -13,6 +13,7 @@ use pipeweaver_smc_core::{
 };
 use tokio::sync::mpsc::Sender;
 use ulid::Ulid;
+use crate::media::MediaCommand;
 use crate::midi::Link;
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -64,6 +65,8 @@ pub struct SmcApp {
     drawer_open: bool,
     drawer_t: f32,
     reversed: HashSet<Ulid>,
+    media_tx: tokio::sync::mpsc::UnboundedSender<MediaCommand>,
+    record_down: bool,
     window_width: f32,
     restore_width: f32,
     restore_pos: Option<egui::Pos2>,
@@ -88,6 +91,7 @@ impl SmcApp {
         swap: Arc<AtomicU8>,
         pickup_net: Arc<AtomicBool>,
         commands: Sender<DaemonRequest>,
+        media_tx: tokio::sync::mpsc::UnboundedSender<MediaCommand>,
     ) -> Self {
         let window_width = config.window_width();
         Self {
@@ -107,6 +111,8 @@ impl SmcApp {
             drawer_open: false,
             drawer_t: 0.0,
             reversed: HashSet::new(),
+            media_tx,
+            record_down: false,
             window_width,
             restore_width: window_width,
             restore_pos: None,
@@ -446,6 +452,120 @@ impl SmcApp {
                 value_font,
                 palette.text,
             );
+        }
+    }
+
+    fn paint_transport(&mut self, ui: &mut egui::Ui, map: &Map) {
+        if self.drawer_t > 0.01 {
+            if self.record_down {
+                self.record_down = false;
+                let _ = self.media_tx.send(MediaCommand::HexStop);
+            }
+            return;
+        }
+        let hover = if self.config.light_panel {
+            Color32::from_black_alpha(10)
+        } else {
+            Color32::from_white_alpha(18)
+        };
+        let active = if self.config.light_panel {
+            Color32::from_black_alpha(18)
+        } else {
+            Color32::from_white_alpha(32)
+        };
+        for index in 0..11 {
+            let rect = map.rect(Rect::from_min_size(
+                pos2(160.5 + 161.0 * index as f32, 814.5 + theme::BEZEL),
+                vec2(86.0, 40.0),
+            ));
+            let sense = if index == 2 {
+                Sense::click_and_drag()
+            } else {
+                Sense::click()
+            };
+            let response = ui.interact(rect, Id::unique(("transport", index)), sense);
+            if response.hovered() {
+                ui.painter().rect_filled(rect, map.radius(9.0), hover);
+            }
+            if response.is_pointer_button_down_on() {
+                ui.painter().rect_filled(rect, map.radius(9.0), active);
+            }
+            let tooltip = match index {
+                0 => "Play",
+                1 => "Pause",
+                2 => "Hold to dictate with Hex",
+                3 => "Seek back 5 seconds",
+                4 => "Seek forward 5 seconds",
+                5 => "Previous track",
+                6 => "Next track",
+                7 => "Give targets another strip",
+                8 => "Give sources another strip",
+                9 => "Show or hide this app",
+                _ => "Open Pipeweaver",
+            };
+            let response = response.on_hover_text(tooltip);
+            match index {
+                0 => {
+                    if response.clicked() {
+                        let _ = self.media_tx.send(MediaCommand::Play);
+                    }
+                }
+                1 => {
+                    if response.clicked() {
+                        let _ = self.media_tx.send(MediaCommand::Pause);
+                    }
+                }
+                2 => {
+                    let down = response.is_pointer_button_down_on();
+                    if down && !self.record_down {
+                        self.record_down = true;
+                        let _ = self.media_tx.send(MediaCommand::HexStart);
+                    } else if !down && self.record_down {
+                        self.record_down = false;
+                        let _ = self.media_tx.send(MediaCommand::HexStop);
+                    }
+                }
+                3 => {
+                    if response.clicked() {
+                        let _ = self.media_tx.send(MediaCommand::SeekBack);
+                    }
+                }
+                4 => {
+                    if response.clicked() {
+                        let _ = self.media_tx.send(MediaCommand::SeekForward);
+                    }
+                }
+                5 => {
+                    if response.clicked() {
+                        let _ = self.media_tx.send(MediaCommand::Previous);
+                    }
+                }
+                6 => {
+                    if response.clicked() {
+                        let _ = self.media_tx.send(MediaCommand::Next);
+                    }
+                }
+                7 => {
+                    if response.clicked() {
+                        self.set_split(self.engine.source_slots().saturating_sub(1));
+                    }
+                }
+                8 => {
+                    if response.clicked() {
+                        self.set_split(self.engine.source_slots() + 1);
+                    }
+                }
+                9 => {
+                    if response.clicked() {
+                        let _ = self.media_tx.send(MediaCommand::ToggleApp);
+                    }
+                }
+                _ => {
+                    if response.clicked() {
+                        let _ = self.media_tx.send(MediaCommand::OpenPipeweaver);
+                    }
+                }
+            }
         }
     }
 
@@ -1142,6 +1262,11 @@ impl eframe::App for SmcApp {
         let snapshot = self.engine.snapshot();
         self.pipeweaver_online = snapshot.connected;
         self.midi = Link::from_code(self.midi_net.load(Ordering::Relaxed));
+        let engine_slots = self.engine.source_slots();
+        if engine_slots != self.config.surface_sources {
+            self.config.surface_sources = engine_slots;
+            self.save_config();
+        }
 
         // The window is created locked so tiling managers keep it floating.
         // Once it has been mapped, allow programmatic resizing again.
@@ -1199,6 +1324,7 @@ impl eframe::App for SmcApp {
                 let map = Map::new(ui.max_rect());
                 self.paint_shell(ui, &map);
                 self.paint_channels(ui, &map, &snapshot);
+                self.paint_transport(ui, &map);
                 self.paint_bezel(ui, &map, &ctx, monitor);
                 if self.screen == Screen::Config {
                     self.paint_config(ui, &map, &ctx, monitor);

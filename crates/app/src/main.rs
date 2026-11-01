@@ -1,4 +1,5 @@
 mod app;
+mod media;
 mod meters;
 mod midi;
 mod single_instance;
@@ -69,6 +70,8 @@ async fn main() -> Result<()> {
     }
 
     let engine = Engine::new(initial.surface_sources);
+    let (media_tx, media_rx) = tokio::sync::mpsc::unbounded_channel();
+    tokio::spawn(media::run(media_rx, ui_on.clone(), focus.clone()));
     let (command_tx, command_rx) = tokio::sync::mpsc::channel(128);
     {
         let (broadcast_tx, mut broadcast_rx) = tokio::sync::broadcast::channel(10);
@@ -101,7 +104,21 @@ async fn main() -> Result<()> {
         let engine = engine.clone();
         let swap = swap.clone();
         let pickup = pickup.clone();
-        std::thread::spawn(move || midi::run_controls(config, engine, command_tx, swap, pickup));
+        let midi_media = media_tx.clone();
+        let midi_ui_on = ui_on.clone();
+        let midi_focus = focus.clone();
+        std::thread::spawn(move || {
+            midi::run_controls(
+                config,
+                engine,
+                command_tx,
+                swap,
+                pickup,
+                midi_media,
+                midi_ui_on,
+                midi_focus,
+            )
+        });
     }
     tokio::spawn(meters::run(engine.clone()));
 
@@ -120,6 +137,7 @@ async fn main() -> Result<()> {
             let swap = swap.clone();
             let pickup = pickup.clone();
             let ui_commands = ui_commands.clone();
+            let media_tx = media_tx.clone();
 
             eframe::run_native(
                 theme::APP_NAME,
@@ -141,6 +159,7 @@ async fn main() -> Result<()> {
                         swap,
                         pickup,
                         ui_commands,
+                        media_tx,
                     )))
                 }),
             )?;

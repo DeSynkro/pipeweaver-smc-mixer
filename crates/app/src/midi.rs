@@ -3,12 +3,13 @@ use midir::{
 };
 use pipeweaver_ipc::commands::{APICommand, DaemonRequest};
 use pipeweaver_shared::{Mix, MuteState, MuteTarget};
+use crate::media::MediaCommand;
 use pipeweaver_smc_core::config::{Config, MidiMode};
 use pipeweaver_smc_core::engine::{ChannelKind, Engine, Snapshot};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::time::Duration;
-use tokio::sync::mpsc::Sender;
+use tokio::sync::mpsc::{Sender, UnboundedSender};
 use ulid::Ulid;
 
 const LED_ON: u8 = 127;
@@ -161,11 +162,17 @@ pub fn run_controls(
     commands: Sender<DaemonRequest>,
     swap: Arc<AtomicU8>,
     pickup: Arc<AtomicBool>,
+    media: UnboundedSender<MediaCommand>,
+    ui_on: Arc<AtomicBool>,
+    focus: Arc<AtomicBool>,
 ) {
     let callback_engine = engine.clone();
     let callback_commands = commands.clone();
     let callback_swap = swap.clone();
     let callback_pickup = pickup.clone();
+    let callback_media = media.clone();
+    let callback_ui_on = ui_on.clone();
+    let callback_focus = focus.clone();
     let mut pickup_state = PickupState::default();
     let mut pickup_was = false;
     let mut pressed = [false; 128];
@@ -192,6 +199,21 @@ pub fn run_controls(
                 &mut pickup_state,
                 pickup_enabled,
             ),
+            52..=62 => {
+                let down = value > 64;
+                if pressed[control as usize] == down {
+                    return;
+                }
+                pressed[control as usize] = down;
+                handle_transport(
+                    control,
+                    down,
+                    &callback_media,
+                    &callback_engine,
+                    &callback_ui_on,
+                    &callback_focus,
+                );
+            }
             64..=95 => {
                 let down = value > 64;
                 if pressed[control as usize] == down {
@@ -234,6 +256,57 @@ pub fn run_controls(
             send_leds(output, &snapshot, &swap, &mut leds);
         }
         std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+fn handle_transport(
+    control: u8,
+    down: bool,
+    media: &UnboundedSender<MediaCommand>,
+    engine: &Arc<Engine>,
+    ui_on: &Arc<AtomicBool>,
+    focus: &Arc<AtomicBool>,
+) {
+    if !down {
+        if control == 54 {
+            let _ = media.send(MediaCommand::HexStop);
+        }
+        return;
+    }
+    match control {
+        52 => {
+            let _ = media.send(MediaCommand::Play);
+        }
+        53 => {
+            let _ = media.send(MediaCommand::Pause);
+        }
+        54 => {
+            let _ = media.send(MediaCommand::HexStart);
+        }
+        55 => {
+            let _ = media.send(MediaCommand::SeekBack);
+        }
+        56 => {
+            let _ = media.send(MediaCommand::SeekForward);
+        }
+        57 => {
+            let _ = media.send(MediaCommand::Previous);
+        }
+        58 => {
+            let _ = media.send(MediaCommand::Next);
+        }
+        59 => engine.set_source_slots(engine.source_slots().saturating_sub(1)),
+        60 => engine.set_source_slots(engine.source_slots() + 1),
+        61 => {
+            let was_on = ui_on.fetch_xor(true, Ordering::Relaxed);
+            if !was_on {
+                focus.store(true, Ordering::Relaxed);
+            }
+        }
+        62 => {
+            let _ = media.send(MediaCommand::OpenPipeweaver);
+        }
+        _ => {}
     }
 }
 
