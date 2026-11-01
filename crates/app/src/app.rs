@@ -206,6 +206,14 @@ impl SmcApp {
         let painter = ui.painter();
         let swapped = self.swap.load(Ordering::Relaxed);
         let scale = map.scale;
+        let channel_colours = self.config.channel_colours;
+        let mix_colour = |is_b: bool| {
+            if is_b {
+                palette.amber
+            } else {
+                palette.accent
+            }
+        };
 
         for (index, channel) in snapshot.channels.iter().enumerate().take(STRIP_COUNT) {
             if !channel.assigned {
@@ -222,10 +230,48 @@ impl SmcApp {
             };
             let channel_colour =
                 Color32::from_rgb(channel.colour.0, channel.colour.1, channel.colour.2);
-            let active_colour = if channel.mute_a {
+            let (fader_mix_b, knob_mix_b) = if is_source {
+                (is_swapped, !is_swapped)
+            } else {
+                (channel.mix_b, false)
+            };
+            let fader_base = if channel_colours {
+                channel_colour
+            } else {
+                mix_colour(fader_mix_b)
+            };
+            let knob_base = if channel_colours {
+                channel_colour
+            } else {
+                mix_colour(knob_mix_b)
+            };
+            let fader_muted = if is_source {
+                if fader_mix_b {
+                    channel.mute_b
+                } else {
+                    channel.mute_a
+                }
+            } else {
+                channel.mute_a
+            };
+            let knob_muted = if is_source {
+                if knob_mix_b {
+                    channel.mute_b
+                } else {
+                    channel.mute_a
+                }
+            } else {
+                false
+            };
+            let fader_colour = if fader_muted {
                 palette.red
             } else {
-                channel_colour
+                fader_base
+            };
+            let knob_colour = if knob_muted {
+                palette.red
+            } else {
+                knob_base
             };
             let knob_disabled = !is_source;
 
@@ -279,7 +325,7 @@ impl SmcApp {
                 if knob > 0 {
                     painter.add(Shape::line(
                         points,
-                        Stroke::new((3.0 * scale).max(1.5), active_colour),
+                        Stroke::new((3.0 * scale).max(1.5), knob_colour),
                     ));
                 }
 
@@ -295,7 +341,7 @@ impl SmcApp {
                     + vec2(pointer_angle.sin(), -pointer_angle.cos()) * (36.0 * scale);
                 painter.line_segment(
                     [centre, tip],
-                    Stroke::new((3.0 * scale).max(1.5), active_colour),
+                    Stroke::new((3.0 * scale).max(1.5), knob_colour),
                 );
                 painter.text(
                     centre + vec2(0.0, 84.0 * scale),
@@ -313,7 +359,7 @@ impl SmcApp {
                     pos2(slot_x, fill_top),
                     vec2(15.0, 801.0 - fill_top),
                 ));
-                painter.rect_filled(fill, map.radius(6.0), active_colour);
+                painter.rect_filled(fill, map.radius(6.0), fader_colour);
             }
 
             let thumb_centre = map.point(slot_x + 7.5, fill_top);
@@ -330,7 +376,7 @@ impl SmcApp {
                     pos2(thumb.left() + 6.0 * scale, thumb.center().y),
                     pos2(thumb.right() - 6.0 * scale, thumb.center().y),
                 ],
-                Stroke::new((2.0 * scale).max(1.0), active_colour),
+                Stroke::new((2.0 * scale).max(1.0), fader_colour),
             );
             painter.text(
                 thumb.center(),
@@ -593,6 +639,7 @@ impl SmcApp {
         let width = self.window_width;
         let mut light = self.config.light_panel;
         let mut pickup = self.pickup_net.load(Ordering::Relaxed);
+        let mut channel_colours = self.config.channel_colours;
         let mut reset = false;
         let heading = (34.0 * map.scale).max(22.0);
         let label = (16.0 * map.scale).max(12.0);
@@ -636,6 +683,14 @@ impl SmcApp {
                     columns[0].label(
                         RichText::new(
                             "Faders and knobs wait for the current value before taking over.",
+                        )
+                        .size(label)
+                        .color(palette.dim),
+                    );
+                    columns[0].checkbox(&mut channel_colours, "Use channel colours");
+                    columns[0].label(
+                        RichText::new(
+                            "Bars use the Pipeweaver channel colour instead of the Personal and Audience colours.",
                         )
                         .size(label)
                         .color(palette.dim),
@@ -719,6 +774,10 @@ impl SmcApp {
         if pickup != self.config.pickup {
             self.config.pickup = pickup;
             self.pickup_net.store(pickup, Ordering::Relaxed);
+            self.save_config();
+        }
+        if channel_colours != self.config.channel_colours {
+            self.config.channel_colours = channel_colours;
             self.save_config();
         }
         if reset {
