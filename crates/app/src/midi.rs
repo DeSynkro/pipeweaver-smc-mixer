@@ -7,7 +7,7 @@ use pipeweaver_ipc::commands::{APICommand, DaemonRequest};
 use pipeweaver_shared::{Mix, MuteState, MuteTarget};
 use pipeweaver_smc_core::config::{Config, MidiMode};
 use pipeweaver_smc_core::engine::{ChannelKind, Engine, Snapshot};
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::{Sender, UnboundedSender};
@@ -170,6 +170,8 @@ pub fn run_controls(
     minimized: Arc<AtomicBool>,
     egui: Arc<Mutex<Option<egui::Context>>>,
     midi_link: Arc<AtomicU8>,
+    last_midi: Arc<AtomicU64>,
+    led_test: Arc<AtomicBool>,
 ) {
     let config_path = Config::path();
     let mut config = config;
@@ -185,6 +187,7 @@ pub fn run_controls(
         let callback_record_hex = record_hex.clone();
         let callback_minimized = minimized.clone();
         let callback_egui = egui.clone();
+        let callback_last_midi = last_midi.clone();
         let mut pickup_state = PickupState::default();
         let mut pickup_was = false;
         let mut pressed = [false; 128];
@@ -194,6 +197,7 @@ pub fn run_controls(
             if message.len() < 3 || message[0] & 0xF0 != 0xB0 {
                 return;
             }
+            callback_last_midi.store(now_millis(), Ordering::Relaxed);
             let control = message[1];
             let value = message[2];
             let pickup_enabled = callback_pickup.load(Ordering::Relaxed);
@@ -269,10 +273,22 @@ pub fn run_controls(
         log::info!("MIDI control connected: {} ({:?})", port.name, port.link);
 
         let mut leds = [u8::MAX; 32];
+        let mut test_frames = 0u8;
         let mut last_check = Instant::now();
         let mut last_link = midi_link.load(Ordering::Relaxed);
         loop {
-            if let Some(output) = output.as_mut() {
+            if led_test.swap(false, Ordering::Relaxed) {
+                test_frames = 10;
+            }
+            if test_frames > 0 {
+                if let Some(output) = output.as_mut() {
+                    for note in 0..32 {
+                        let _ = output.send(&[0x90, note, 127]);
+                    }
+                    leds = [127; 32];
+                }
+                test_frames -= 1;
+            } else if let Some(output) = output.as_mut() {
                 let snapshot = engine.snapshot();
                 send_leds(output, &snapshot, &swap, &mut leds);
             }
@@ -457,6 +473,13 @@ impl PickupState {
         state.last_raw = raw;
         Some(percent)
     }
+}
+
+fn now_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 fn handle_axis(

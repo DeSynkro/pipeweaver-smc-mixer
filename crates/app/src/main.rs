@@ -19,7 +19,7 @@ use simplelog::{
     TerminalMode, WriteLogger,
 };
 use std::fs::{self, OpenOptions};
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -130,6 +130,8 @@ async fn main() -> Result<()> {
     let swap = Arc::new(AtomicU8::new(0));
     let pickup = Arc::new(AtomicBool::new(initial.pickup));
     let record_hex = Arc::new(AtomicBool::new(initial.record_hex));
+    let last_midi = Arc::new(AtomicU64::new(0));
+    let led_test = Arc::new(AtomicBool::new(false));
     let ui_commands = command_tx.clone();
     {
         let config = initial.clone();
@@ -143,6 +145,8 @@ async fn main() -> Result<()> {
         let midi_minimized = minimized.clone();
         let midi_egui = tray_context.egui.clone();
         let midi_link = midi_link.clone();
+        let midi_last_midi = last_midi.clone();
+        let midi_led_test = led_test.clone();
         std::thread::spawn(move || {
             midi::run_controls(
                 config,
@@ -157,6 +161,8 @@ async fn main() -> Result<()> {
                 midi_minimized,
                 midi_egui,
                 midi_link,
+                midi_last_midi,
+                midi_led_test,
             )
         });
     }
@@ -181,6 +187,8 @@ async fn main() -> Result<()> {
             let record_hex = record_hex.clone();
             let mic_muted = mic_muted.clone();
             let minimized = minimized.clone();
+            let last_midi = last_midi.clone();
+            let led_test = led_test.clone();
 
             eframe::run_native(
                 theme::APP_NAME,
@@ -206,6 +214,8 @@ async fn main() -> Result<()> {
                         record_hex,
                         mic_muted,
                         minimized,
+                        last_midi,
+                        led_test,
                     )))
                 }),
             )?;

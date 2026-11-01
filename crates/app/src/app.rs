@@ -16,8 +16,8 @@ use pipeweaver_smc_core::{
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
-use std::time::{Duration, Instant};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc::Sender;
 use ulid::Ulid;
 
@@ -70,6 +70,8 @@ pub struct SmcApp {
     mic_muted: Arc<AtomicBool>,
     minimized: Arc<AtomicBool>,
     minimize_at: Option<Instant>,
+    last_midi: Arc<AtomicU64>,
+    led_test: Arc<AtomicBool>,
     record_down: bool,
     window_width: f32,
     restore_width: f32,
@@ -99,6 +101,8 @@ impl SmcApp {
         record_hex: Arc<AtomicBool>,
         mic_muted: Arc<AtomicBool>,
         minimized: Arc<AtomicBool>,
+        last_midi: Arc<AtomicU64>,
+        led_test: Arc<AtomicBool>,
     ) -> Self {
         let window_width = config.window_width();
         Self {
@@ -123,6 +127,8 @@ impl SmcApp {
             mic_muted,
             minimized,
             minimize_at: None,
+            last_midi,
+            led_test,
             record_down: false,
             window_width,
             restore_width: window_width,
@@ -1106,7 +1112,8 @@ impl SmcApp {
             StrokeKind::Inside,
         );
 
-        let inner = panel.shrink(28.0 * map.scale);
+        let mut inner = panel.shrink(28.0 * map.scale);
+        inner.max.x = panel.max.x - 6.0 * map.scale;
         let width = self.window_width;
         let mut light = self.config.light_panel;
         let mut pickup = self.pickup_net.load(Ordering::Relaxed);
@@ -1124,6 +1131,11 @@ impl SmcApp {
         ui.scope_builder(
             UiBuilder::new().max_rect(inner).layout(Layout::top_down(Align::LEFT)),
             |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt("config-scroll")
+                    .auto_shrink([false, false])
+                    .scroll_source(egui::scroll_area::ScrollSource::ALL)
+                    .show(ui, |ui| {
                 ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
                 ui.label(
                     RichText::new("Config")
@@ -1133,7 +1145,7 @@ impl SmcApp {
                 );
                 ui.label(
                     RichText::new(
-                        "The shell is in place. Connection, surface and diagnostics arrive next.",
+                        "Connection, surface, startup and diagnostics.",
                     )
                     .size(label)
                     .color(palette.dim),
@@ -1143,6 +1155,8 @@ impl SmcApp {
                 ui.add_space(6.0);
 
                 ui.columns(2, |columns| {
+                    columns[0].add_space(40.0 * map.scale);
+                    columns[1].add_space(40.0 * map.scale);
                     columns[0].label(
                         RichText::new("Appearance")
                             .size(section)
@@ -1184,6 +1198,22 @@ impl SmcApp {
                         RichText::new(
                             "Hides the drawer and its tab. Off-surface channels can still be changed in Pipeweaver.",
                         )
+                        .size(label)
+                        .color(palette.dim),
+                    );
+                    let off_surface: Vec<String> = self
+                        .engine
+                        .snapshot()
+                        .off_surface
+                        .iter()
+                        .map(|channel| channel.name.clone())
+                        .collect();
+                    columns[0].label(
+                        RichText::new(if off_surface.is_empty() {
+                            String::from("Off surface: none")
+                        } else {
+                            format!("Off surface: {}", off_surface.join(", "))
+                        })
                         .size(label)
                         .color(palette.dim),
                     );
@@ -1340,6 +1370,78 @@ impl SmcApp {
 
                     columns[1].add_space(12.0);
                     columns[1].label(
+                        RichText::new("Diagnostics")
+                            .size(section)
+                            .strong()
+                            .color(palette.text),
+                    );
+                    columns[1].label(
+                        RichText::new(format!("Config: {}", self.config_path.display()))
+                            .size(label)
+                            .color(palette.dim),
+                    );
+                    let last_midi = self.last_midi.load(Ordering::Relaxed);
+                    let activity = if last_midi == 0 {
+                        String::from("Last MIDI activity: none yet")
+                    } else {
+                        let now = SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .map(|duration| duration.as_millis() as u64)
+                            .unwrap_or(last_midi);
+                        format!(
+                            "Last MIDI activity: {}s ago",
+                            now.saturating_sub(last_midi) / 1000
+                        )
+                    };
+                    columns[1].label(RichText::new(activity).size(label).color(palette.dim));
+                    if columns[1].button("Flash LEDs").clicked() {
+                        self.led_test.store(true, Ordering::Relaxed);
+                    }
+                    let snapshot = self.engine.snapshot();
+                    let swapped = self.swap.load(Ordering::Relaxed);
+                    for (index, channel) in snapshot.channels.iter().enumerate() {
+                        if !channel.assigned {
+                            continue;
+                        }
+                        let kind = if channel.kind == ChannelKind::Source {
+                            "source"
+                        } else {
+                            "target"
+                        };
+                        let ccs = if channel.kind == ChannelKind::Source {
+                            format!("fader {} · knob {}", 40 + index, 30 + index)
+                        } else {
+                            format!("fader {}", 40 + index)
+                        };
+                        let state = if channel.kind == ChannelKind::Source {
+                            let mut parts = Vec::new();
+                            if swapped & (1 << index) != 0 {
+                                parts.push("swap");
+                            }
+                            if channel.linked {
+                                parts.push("linked");
+                            }
+                            if parts.is_empty() {
+                                String::new()
+                            } else {
+                                format!(" · {}", parts.join(" · "))
+                            }
+                        } else {
+                            String::new()
+                        };
+                        columns[1].label(
+                            RichText::new(format!(
+                                "{}: {} · {kind} · {ccs}{state}",
+                                index + 1,
+                                channel.name
+                            ))
+                            .size(label)
+                            .color(palette.dim),
+                        );
+                    }
+
+                    columns[1].add_space(12.0);
+                    columns[1].label(
                         RichText::new("About")
                             .size(section)
                             .strong()
@@ -1391,6 +1493,7 @@ impl SmcApp {
                         );
                     });
                 });
+                    });
             },
         );
 
@@ -1440,6 +1543,11 @@ impl SmcApp {
     }
 
     fn paint_drawer(&mut self, ui: &mut egui::Ui, snapshot: &Snapshot) {
+        if self.screen == Screen::Config {
+            self.drawer_open = false;
+            self.drawer_t = 0.0;
+            return;
+        }
         if self.config.hide_off_surface {
             self.drawer_open = false;
             self.drawer_t = 0.0;
