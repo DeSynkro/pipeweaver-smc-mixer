@@ -39,7 +39,7 @@ It's a very niche software for a niche situation, but I thought i'd share if any
 - **Linux** with Wayland or X11.
 - **Pipeweaver** installed and running. The app talks to it on `localhost:14565`.
 - **M-VAVE SMC-Mixer**, connected over USB or Bluetooth.
-- **The SMC preset** with the CC and LED mapping this app expects. Setup notes will live in `docs/preset.md` once the mapping is confirmed.
+- **An SMC-Mixer on its factory preset.** The app expects the mapping in [SMC mapping](#smc-mapping); no programming is needed unless the unit has been remapped.
 - For the AppImage: a recent glibc. Builds are made on Arch, so older distributions may need to build from source.
 
 ## Quick Start
@@ -114,13 +114,40 @@ chmod +x Pipeweaver-SMC-Mixer-x86_64.AppImage
 - **Tray and autostart:** close to tray, reopen with a click, start minimized on login.
 - **No telemetry:** no accounts, no analytics, no cloud.
 
+## SMC mapping
+
+The app expects the mixer's factory preset on MIDI channel 1. No programming is needed unless the unit has been remapped.
+
+| Control | MIDI |
+| --- | --- |
+| Faders 1–8 | CC 40–47 |
+| Knobs 1–8 | CC 30–37 |
+| M 1–8 | CC 64–71 |
+| S 1–8 | CC 72–79 |
+| R 1–8 | CC 80–87 |
+| ■ 1–8 | CC 88–95 |
+| LED M | Notes 16–23 |
+| LED S | Notes 8–15 |
+| LED R | Notes 0–7 |
+| LED ■ | Notes 24–31 |
+| Play / Pause | CC 52 / 53 |
+| Record | CC 54 |
+| Rewind / Forward | CC 55 / 56 |
+| Previous / Next | CC 57 / 58 |
+| Split up / down | CC 59 / 60 |
+| Left / right | CC 61 / 62 |
+
+On source strips the second button is labelled **A** on screen but corresponds to the hardware **S** button; it mutes the Audience/B mix. On target strips, **S** selects mix A and **R** selects mix B.
+
+If the controls do not respond, the mixer may have been remapped or be on a different preset slot.
+
 ## Setup
 
 1. Start Pipeweaver and make sure the daemon is online.
 2. Connect the SMC-Mixer over USB or Bluetooth.
-3. Load the SMC preset that matches the mapping table.
+3. Use the mixer's factory preset. If it has been remapped, restore it or match the table in [SMC mapping](#smc-mapping).
 4. Start Pipeweaver SMC Mixer.
-5. Open Config and choose the MIDI port and connection mode (Auto, Wired or Bluetooth).
+5. Open Config and choose the connection mode (Auto, Wired or Bluetooth). The MIDI port is detected automatically.
 
 Auto prefers the wired port and falls back to Bluetooth. The mixer can stay connected while you switch modes; the app reconnects automatically.
 
