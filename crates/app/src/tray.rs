@@ -27,14 +27,15 @@ enum TrayMessage {
     Quit,
 }
 
-pub async fn spawn(stop: Arc<AtomicBool>, context: Arc<TrayContext>) -> anyhow::Result<()> {
+pub async fn spawn(
+    stop: Arc<AtomicBool>,
+    context: Arc<TrayContext>,
+    ready: Arc<AtomicBool>,
+) -> anyhow::Result<()> {
     let (tx, mut rx) = mpsc::channel(20);
     let icon = TrayIcon::new(tx, context.clone());
-    let handle = icon
-        .disable_dbus_name(true)
-        .assume_sni_available(true)
-        .spawn()
-        .await?;
+    let handle = icon.disable_dbus_name(true).spawn().await?;
+    ready.store(true, Ordering::Relaxed);
     let mut interval = tokio::time::interval(Duration::from_millis(100));
     let mut last_midi_mode = context.midi_mode.load(Ordering::Relaxed);
     let mut last_pickup = context.pickup.load(Ordering::Relaxed);
@@ -96,6 +97,7 @@ pub async fn spawn(stop: Arc<AtomicBool>, context: Arc<TrayContext>) -> anyhow::
         }
     }
 
+    ready.store(false, Ordering::Relaxed);
     if !handle.is_closed() {
         handle.shutdown();
     }

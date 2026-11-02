@@ -48,7 +48,7 @@ async fn main() -> Result<()> {
     let start_minimized = args.quiet || initial.start_minimized;
 
     let stop = Arc::new(AtomicBool::new(false));
-    let ui_on = Arc::new(AtomicBool::new(!start_minimized));
+    let ui_on = Arc::new(AtomicBool::new(true));
     let focus = Arc::new(AtomicBool::new(false));
     let minimized = Arc::new(AtomicBool::new(false));
     let midi_mode = Arc::new(AtomicU8::new(initial.midi_mode.code()));
@@ -66,7 +66,42 @@ async fn main() -> Result<()> {
         record_hex: record_hex.clone(),
         config_path: config_path.clone(),
     });
-    let tray_handle = tokio::spawn(tray::spawn(stop.clone(), tray_context.clone()));
+    let tray_ready = Arc::new(AtomicBool::new(false));
+    let tray_handle = tokio::spawn({
+        let stop = stop.clone();
+        let ui_on = ui_on.clone();
+        let egui = tray_context.egui.clone();
+        let context = tray_context.clone();
+        let ready = tray_ready.clone();
+        async move {
+            if let Err(error) = tray::spawn(stop.clone(), context, ready.clone()).await {
+                log::warn!("Tray unavailable: {error:#}");
+            }
+            ready.store(false, Ordering::Relaxed);
+            if !stop.load(Ordering::Relaxed) {
+                // If the tray goes away, never leave the app hidden.
+                ui_on.store(true, Ordering::Relaxed);
+                if let Some(ctx) = egui.lock().unwrap().as_ref() {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                }
+            }
+        }
+    });
+
+    if start_minimized {
+        // Give the tray a moment to register. Starting hidden without one
+        // would leave the app with no way back.
+        for _ in 0..20 {
+            if tray_ready.load(Ordering::Relaxed) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+    ui_on.store(
+        start_visible(start_minimized, tray_ready.load(Ordering::Relaxed)),
+        Ordering::Relaxed,
+    );
 
     #[cfg(unix)]
     {
@@ -259,6 +294,7 @@ async fn main() -> Result<()> {
             let midi_link = midi_link.clone();
             let swap = swap.clone();
             let ui_reset = ui_reset.clone();
+            let tray_ready = tray_ready.clone();
             let pickup = pickup.clone();
             let ui_knob_mode = knob_mode.clone();
             let ui_commands = ui_commands.clone();
@@ -292,6 +328,7 @@ async fn main() -> Result<()> {
                         midi_mode,
                         swap,
                         ui_reset,
+                        tray_ready,
                         pickup,
                         ui_knob_mode,
                         ui_commands,
@@ -315,6 +352,10 @@ async fn main() -> Result<()> {
     let _ = midi_handle.join();
     log::info!("Stopped {}", theme::APP_NAME);
     Ok(())
+}
+
+fn start_visible(start_minimized: bool, tray_ready: bool) -> bool {
+    !start_minimized || !tray_ready
 }
 
 fn window_options(config: &Config) -> eframe::NativeOptions {
@@ -377,4 +418,17 @@ fn setup_logging() {
     }
 
     let _ = CombinedLogger::init(loggers);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::start_visible;
+
+    #[test]
+    fn never_starts_hidden_without_a_tray() {
+        assert!(!start_visible(true, true));
+        assert!(start_visible(true, false));
+        assert!(start_visible(false, true));
+        assert!(start_visible(false, false));
+    }
 }

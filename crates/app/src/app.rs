@@ -96,6 +96,7 @@ pub struct SmcApp {
     midi_mode: Arc<AtomicU8>,
     swap: Arc<AtomicU8>,
     ui_reset: Arc<AtomicU8>,
+    tray_ready: Arc<AtomicBool>,
     pickup_net: Arc<AtomicBool>,
     knob_mode: Arc<KnobMode>,
     knob_action: Option<KnobAction>,
@@ -140,6 +141,7 @@ impl SmcApp {
         midi_mode: Arc<AtomicU8>,
         swap: Arc<AtomicU8>,
         ui_reset: Arc<AtomicU8>,
+        tray_ready: Arc<AtomicBool>,
         pickup_net: Arc<AtomicBool>,
         knob_mode: Arc<KnobMode>,
         commands: Sender<DaemonRequest>,
@@ -167,6 +169,7 @@ impl SmcApp {
             midi_mode,
             swap,
             ui_reset,
+            tray_ready,
             pickup_net,
             knob_mode,
             knob_action: None,
@@ -2450,7 +2453,13 @@ impl eframe::App for SmcApp {
         }
         if ctx.input(|input| input.viewport().close_requested()) {
             self.save_config();
-            self.ui_on.store(false, Ordering::Relaxed);
+            if self.tray_ready.load(Ordering::Relaxed) {
+                self.ui_on.store(false, Ordering::Relaxed);
+            } else {
+                // No tray to come back from: closing the window quits.
+                self.stop.store(true, Ordering::Relaxed);
+                self.ui_on.store(false, Ordering::Relaxed);
+            }
         }
         if let Some(rect) = ctx.input(|input| input.viewport().inner_rect) {
             if !self.resizing {
