@@ -1285,14 +1285,6 @@ impl SmcApp {
                             .color(palette.dim),
                     );
                     columns[0].checkbox(&mut light, "Light theme");
-                    columns[0].checkbox(&mut pickup, "Soft takeover");
-                    columns[0].label(
-                        RichText::new(
-                            "Faders and knobs wait for the current value before taking over.",
-                        )
-                        .size(label)
-                        .color(palette.dim),
-                    );
                     columns[0].checkbox(&mut channel_colours, "Use channel colours");
                     columns[0].label(
                         RichText::new(
@@ -1497,6 +1489,14 @@ impl SmcApp {
                             .size(section)
                             .strong()
                             .color(palette.text),
+                    );
+                    columns[1].checkbox(&mut pickup, "Soft takeover");
+                    columns[1].label(
+                        RichText::new(
+                            "Faders and knobs wait for the current value before taking over.",
+                        )
+                        .size(label)
+                        .color(palette.dim),
                     );
                     columns[1].horizontal(|ui| {
                         let mut checked = knob_mode == MODE_RELATIVE;
