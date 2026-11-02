@@ -142,8 +142,11 @@ async fn main() -> Result<()> {
                     Ok(Ok(_)) => {}
                     Ok(Err(error)) => log::warn!("Pipeweaver command failed: {error:#}"),
                     Err(_) => {
-                        log::warn!("Pipeweaver command timed out");
-                        while command_rx.try_recv().is_ok() {}
+                        // Keep the queue: a single slow HTTP call must not
+                        // discard discrete actions such as mute, link, swap
+                        // or routing. Volume updates are idempotent and FIFO,
+                        // so the newest one still wins once the daemon is back.
+                        log::warn!("Pipeweaver command timed out; keeping the queue");
                     }
                 }
             }
