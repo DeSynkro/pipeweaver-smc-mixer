@@ -2825,7 +2825,11 @@ fn config_button(
     accent: Color32,
 ) -> bool {
     let size = vec2((120.0 * scale).max(84.0), (26.0 * scale).max(20.0));
-    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    // `columns` uses a justified layout, which stretches the allocated
+    // response to the column width. Interact with the drawn rect instead so
+    // the hitbox matches the button.
+    let (rect, allocated) = ui.allocate_exact_size(size, Sense::hover());
+    let response = ui.interact(rect, allocated.id, Sense::click());
     let fill = if response.hovered() {
         blend(palette.card, accent, 0.18)
     } else {
