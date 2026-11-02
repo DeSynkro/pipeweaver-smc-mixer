@@ -153,8 +153,13 @@ async fn main() -> Result<()> {
             loop {
                 let config = Config::load(&config_path);
                 let detected = midi::detect(&config);
-                log::debug!("MIDI link: {:?}", detected);
-                link.store(detected.code(), Ordering::Relaxed);
+                log::debug!("MIDI port scan: {:?}", detected);
+                // Only absence is trustworthy here: a listed port does not
+                // mean the app managed to open it. The real connected state
+                // comes from the control loop.
+                if detected == midi::Link::Offline {
+                    link.store(midi::Link::Offline.code(), Ordering::Relaxed);
+                }
                 tokio::time::sleep(Duration::from_secs(2)).await;
             }
         });

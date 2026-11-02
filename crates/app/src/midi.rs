@@ -379,11 +379,13 @@ pub fn run_controls(
             Some(port) => port,
             None => {
                 log::warn!("MIDI control: SMC-Mixer port not available");
+                midi_link.store(Link::Offline.code(), Ordering::Relaxed);
                 std::thread::sleep(Duration::from_secs(1));
                 config = Config::load(&config_path);
                 continue;
             }
         };
+        midi_link.store(port.link.code(), Ordering::Relaxed);
 
         let mut output = open_output(&config);
         if output.is_none() {
