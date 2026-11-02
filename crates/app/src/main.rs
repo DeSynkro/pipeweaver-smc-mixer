@@ -194,6 +194,7 @@ async fn main() -> Result<()> {
         });
     }
     let swap = Arc::new(AtomicU8::new(0));
+    let ui_reset = Arc::new(AtomicU8::new(0));
     let last_midi = Arc::new(AtomicU64::new(0));
     let led_test = Arc::new(AtomicBool::new(false));
     let startup_animation = Arc::new(AtomicBool::new(initial.startup_animation));
@@ -203,6 +204,7 @@ async fn main() -> Result<()> {
         let config = initial.clone();
         let engine = engine.clone();
         let swap = swap.clone();
+        let midi_ui_reset = ui_reset.clone();
         let pickup = pickup.clone();
         let midi_knob_mode = knob_mode.clone();
         let midi_media = media_tx.clone();
@@ -225,6 +227,7 @@ async fn main() -> Result<()> {
                 swap,
                 pickup,
                 midi_knob_mode,
+                midi_ui_reset,
                 midi_media,
                 midi_ui_on,
                 midi_focus,
@@ -255,6 +258,7 @@ async fn main() -> Result<()> {
             let engine = engine.clone();
             let midi_link = midi_link.clone();
             let swap = swap.clone();
+            let ui_reset = ui_reset.clone();
             let pickup = pickup.clone();
             let ui_knob_mode = knob_mode.clone();
             let ui_commands = ui_commands.clone();
@@ -287,6 +291,7 @@ async fn main() -> Result<()> {
                         midi_link,
                         midi_mode,
                         swap,
+                        ui_reset,
                         pickup,
                         ui_knob_mode,
                         ui_commands,

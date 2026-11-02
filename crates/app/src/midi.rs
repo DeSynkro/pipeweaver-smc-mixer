@@ -238,6 +238,7 @@ pub fn run_controls(
     swap: Arc<AtomicU8>,
     pickup: Arc<AtomicBool>,
     knob_mode: Arc<KnobMode>,
+    ui_reset: Arc<AtomicU8>,
     media: UnboundedSender<MediaCommand>,
     ui_on: Arc<AtomicBool>,
     focus: Arc<AtomicBool>,
@@ -267,6 +268,7 @@ pub fn run_controls(
         let callback_swap = swap.clone();
         let callback_pickup = pickup.clone();
         let callback_knob_mode = knob_mode.clone();
+        let callback_ui_reset = ui_reset.clone();
         let callback_media = media.clone();
         let callback_ui_on = ui_on.clone();
         let callback_focus = focus.clone();
@@ -284,6 +286,15 @@ pub fn run_controls(
                 return;
             }
             callback_last_midi.store(now_millis(), Ordering::Relaxed);
+            let reset = callback_ui_reset.swap(0, Ordering::Relaxed);
+            if reset != 0 {
+                for index in 0..8 {
+                    if reset & (1 << index) != 0 {
+                        axis_state.pickup.reset_strip(index);
+                        axis_state.knobs.reset(index);
+                    }
+                }
+            }
             let control = message[1];
             let value = message[2];
             let pickup_enabled = callback_pickup.load(Ordering::Relaxed);
@@ -341,7 +352,7 @@ pub fn run_controls(
                             &callback_engine,
                             &callback_commands,
                             &callback_swap,
-                            &mut axis_state.pickup,
+                            &mut axis_state,
                         );
                     }
                 }
@@ -640,6 +651,10 @@ struct KnobBank {
 }
 
 impl KnobBank {
+    fn reset(&mut self, index: usize) {
+        self.knobs[index] = KnobState::default();
+    }
+
     fn adjust_relative(
         &mut self,
         index: usize,
@@ -770,7 +785,7 @@ fn handle_button(
     engine: &Engine,
     commands: &Sender<DaemonRequest>,
     swap: &AtomicU8,
-    pickup: &mut PickupState,
+    state: &mut AxisState,
 ) {
     let index = match control {
         64..=71 => (control - 64) as usize,
@@ -790,7 +805,8 @@ fn handle_button(
 
     if control / 8 == 10 && channel.kind == ChannelKind::Source {
         swap.fetch_xor(1 << index, Ordering::Relaxed);
-        pickup.reset_strip(index);
+        state.pickup.reset_strip(index);
+        state.knobs.reset(index);
         return;
     }
 
@@ -832,7 +848,8 @@ fn handle_button(
             DaemonRequest::Pipewire(APICommand::SetTargetMix(channel.id, Mix::B))
         }
         (11, ChannelKind::Source) => {
-            pickup.reset_knob(index);
+            state.pickup.reset_knob(index);
+            state.knobs.reset(index);
             DaemonRequest::Pipewire(APICommand::SetSourceVolumeLinked(
                 channel.id,
                 !channel.linked,
@@ -917,11 +934,12 @@ fn startup_pattern(elapsed_ms: u64) -> Option<[u8; 32]> {
 #[cfg(test)]
 mod tests {
     use super::{
-        KnobBank, LED_OFF, LED_ON, choose_index, device_key, led_pattern, output_candidates,
-        relative_delta,
+        KnobBank, LED_OFF, LED_ON, PickupState, choose_index, device_key, led_pattern,
+        output_candidates, relative_delta,
     };
     use pipeweaver_smc_core::config::MidiMode;
     use pipeweaver_smc_core::engine::Snapshot;
+    use ulid::Ulid;
 
     fn names(list: &[&str]) -> Vec<String> {
         list.iter().map(|name| name.to_string()).collect()
@@ -998,6 +1016,26 @@ mod tests {
         assert_eq!(bank.adjust_relative(0, 65, 100, 1_000, 65, 1), None);
         // Long idle reseeds from the on-screen value before the step.
         assert_eq!(bank.adjust_relative(0, 1, 0, 2_000, 65, 1), None);
+    }
+
+    #[test]
+    fn resetting_a_knob_clears_its_accumulator() {
+        let mut bank = KnobBank::default();
+        assert_eq!(bank.adjust_relative(0, 65, 50, 1_000, 65, 1), Some(51));
+        bank.reset(0);
+        assert_eq!(bank.adjust_relative(0, 65, 80, 1_100, 65, 1), Some(81));
+    }
+
+    #[test]
+    fn resetting_a_strip_requires_takeover_again() {
+        let id = Ulid::new();
+        let mut pickup = PickupState::default();
+        assert_eq!(pickup.filter(0, 0, 0, 50, id, true), None);
+        assert_eq!(pickup.filter(0, 0, 64, 50, id, true), Some(50));
+        assert_eq!(pickup.filter(0, 0, 58, 50, id, true), Some(46));
+
+        pickup.reset_strip(0);
+        assert_eq!(pickup.filter(0, 0, 58, 50, id, true), None);
     }
 
     #[test]

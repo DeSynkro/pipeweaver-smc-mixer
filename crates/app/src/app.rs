@@ -95,6 +95,7 @@ pub struct SmcApp {
     midi_net: Arc<AtomicU8>,
     midi_mode: Arc<AtomicU8>,
     swap: Arc<AtomicU8>,
+    ui_reset: Arc<AtomicU8>,
     pickup_net: Arc<AtomicBool>,
     knob_mode: Arc<KnobMode>,
     knob_action: Option<KnobAction>,
@@ -138,6 +139,7 @@ impl SmcApp {
         midi_net: Arc<AtomicU8>,
         midi_mode: Arc<AtomicU8>,
         swap: Arc<AtomicU8>,
+        ui_reset: Arc<AtomicU8>,
         pickup_net: Arc<AtomicBool>,
         knob_mode: Arc<KnobMode>,
         commands: Sender<DaemonRequest>,
@@ -164,6 +166,7 @@ impl SmcApp {
             midi_net,
             midi_mode,
             swap,
+            ui_reset,
             pickup_net,
             knob_mode,
             knob_action: None,
@@ -801,12 +804,16 @@ impl SmcApp {
                             }
                             2 => {
                                 self.swap.fetch_xor(1 << index, Ordering::Relaxed);
+                                self.ui_reset.fetch_or(1 << index, Ordering::Relaxed);
                                 None
                             }
-                            _ => Some(DaemonRequest::Pipewire(APICommand::SetSourceVolumeLinked(
-                                channel.id,
-                                !channel.linked,
-                            ))),
+                            _ => {
+                                self.ui_reset.fetch_or(1 << index, Ordering::Relaxed);
+                                Some(DaemonRequest::Pipewire(APICommand::SetSourceVolumeLinked(
+                                    channel.id,
+                                    !channel.linked,
+                                )))
+                            }
                         }
                     } else {
                         match slot {
@@ -820,12 +827,20 @@ impl SmcApp {
                                     channel.id, state,
                                 )))
                             }
-                            1 if channel.mix_b => Some(DaemonRequest::Pipewire(
-                                APICommand::SetTargetMix(channel.id, Mix::A),
-                            )),
-                            2 if !channel.mix_b => Some(DaemonRequest::Pipewire(
-                                APICommand::SetTargetMix(channel.id, Mix::B),
-                            )),
+                            1 if channel.mix_b => {
+                                self.ui_reset.fetch_or(1 << index, Ordering::Relaxed);
+                                Some(DaemonRequest::Pipewire(APICommand::SetTargetMix(
+                                    channel.id,
+                                    Mix::A,
+                                )))
+                            }
+                            2 if !channel.mix_b => {
+                                self.ui_reset.fetch_or(1 << index, Ordering::Relaxed);
+                                Some(DaemonRequest::Pipewire(APICommand::SetTargetMix(
+                                    channel.id,
+                                    Mix::B,
+                                )))
+                            }
                             _ => None,
                         }
                     };
