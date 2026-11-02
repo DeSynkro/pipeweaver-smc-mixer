@@ -527,18 +527,13 @@ impl SmcApp {
                     ));
                 }
 
-                let hover_colour = if channel_colours {
-                    knob_mix
-                } else {
-                    palette.accent
-                };
                 let cap_fill = if knob_hovered {
-                    blend(palette.card, hover_colour, 0.25)
+                    blend(palette.card, knob_mix, 0.25)
                 } else {
                     palette.card
                 };
                 let cap_border = if knob_hovered {
-                    hover_colour
+                    knob_mix
                 } else {
                     palette.border
                 };
@@ -618,18 +613,13 @@ impl SmcApp {
                     .ctx()
                     .pointer_hover_pos()
                     .is_some_and(|pos| thumb.contains(pos));
-            let fader_hover_colour = if channel_colours {
-                fader_mix
-            } else {
-                palette.accent
-            };
             let thumb_fill = if fader_hovered {
-                blend(palette.card_hover, fader_hover_colour, 0.25)
+                blend(palette.card_hover, fader_mix, 0.25)
             } else {
                 palette.card_hover
             };
             let thumb_border = if fader_hovered {
-                fader_hover_colour
+                fader_mix
             } else {
                 palette.border
             };
