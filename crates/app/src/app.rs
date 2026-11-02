@@ -1293,14 +1293,6 @@ impl SmcApp {
                         .size(label)
                         .color(palette.dim),
                     );
-
-                    columns[0].add_space(12.0);
-                    columns[0].label(
-                        RichText::new("Surface")
-                            .size(section)
-                            .strong()
-                            .color(palette.text),
-                    );
                     columns[0].checkbox(&mut hide_off_surface, "Hide off-surface tray");
                     columns[0].label(
                         RichText::new(
