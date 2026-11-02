@@ -1,3 +1,4 @@
+use crate::knob_mode::{self, KnobMode, MODE_RELATIVE, REQUEST_NONE};
 use crate::media::MediaCommand;
 use egui::ViewportCommand;
 use midir::{
@@ -236,6 +237,7 @@ pub fn run_controls(
     commands: Sender<DaemonRequest>,
     swap: Arc<AtomicU8>,
     pickup: Arc<AtomicBool>,
+    knob_mode: Arc<KnobMode>,
     media: UnboundedSender<MediaCommand>,
     ui_on: Arc<AtomicBool>,
     focus: Arc<AtomicBool>,
@@ -257,10 +259,14 @@ pub fn run_controls(
         if stop.load(Ordering::Relaxed) {
             return;
         }
+        // The control port is released between iterations, so the config
+        // exchange never competes with the running surface.
+        knob_mode::process(&config, &knob_mode);
         let callback_engine = engine.clone();
         let callback_commands = commands.clone();
         let callback_swap = swap.clone();
         let callback_pickup = pickup.clone();
+        let callback_knob_mode = knob_mode.clone();
         let callback_media = media.clone();
         let callback_ui_on = ui_on.clone();
         let callback_focus = focus.clone();
@@ -268,7 +274,7 @@ pub fn run_controls(
         let callback_minimized = minimized.clone();
         let callback_egui = egui.clone();
         let callback_last_midi = last_midi.clone();
-        let mut pickup_state = PickupState::default();
+        let mut axis_state = AxisState::default();
         let mut pickup_was = false;
         let mut pressed = [false; 128];
         let mut hex_active = false;
@@ -282,9 +288,12 @@ pub fn run_controls(
             let value = message[2];
             let pickup_enabled = callback_pickup.load(Ordering::Relaxed);
             if pickup_enabled && !pickup_was {
-                pickup_state.reset_all();
+                axis_state.pickup.reset_all();
             }
             pickup_was = pickup_enabled;
+            let relative = callback_knob_mode.mode.load(Ordering::Relaxed) == MODE_RELATIVE;
+            let up = callback_knob_mode.up.load(Ordering::Relaxed);
+            let down = callback_knob_mode.down.load(Ordering::Relaxed);
 
             match control {
                 30..=47 => handle_axis(
@@ -293,8 +302,13 @@ pub fn run_controls(
                     &callback_engine,
                     &callback_commands,
                     &callback_swap,
-                    &mut pickup_state,
-                    pickup_enabled,
+                    &mut axis_state,
+                    AxisModes {
+                        pickup: pickup_enabled,
+                        relative,
+                        up,
+                        down,
+                    },
                 ),
                 52..=62 => {
                     let down = value > 64;
@@ -327,7 +341,7 @@ pub fn run_controls(
                             &callback_engine,
                             &callback_commands,
                             &callback_swap,
-                            &mut pickup_state,
+                            &mut axis_state.pickup,
                         );
                     }
                 }
@@ -365,6 +379,9 @@ pub fn run_controls(
                     }
                 }
                 return;
+            }
+            if knob_mode.request.load(Ordering::Relaxed) != REQUEST_NONE {
+                break;
             }
             if animation_preview.swap(false, Ordering::Relaxed) {
                 animation_active = true;
@@ -574,6 +591,82 @@ impl PickupState {
     }
 }
 
+/// How long the knob must be idle before it re-reads the value Pipeweaver
+/// reports. During a continuous turn the bank keeps its own accumulator so a
+/// lagging round trip cannot drag the value backwards.
+const KNOB_RESYNC_MS: u64 = 500;
+
+/// Decode one relative CC step. The mixer sends `max` for clockwise and
+/// `min` for counter-clockwise; with the factory pair that is 1 up and 65
+/// down.
+fn relative_delta(value: u8, up: u8, down: u8) -> i16 {
+    if up != down {
+        if value == up {
+            return 1;
+        }
+        if value == down {
+            return -1;
+        }
+    }
+    if value > 64 { 1 } else { -1 }
+}
+
+#[derive(Clone, Copy, Default)]
+struct KnobState {
+    percent: f32,
+    seeded: bool,
+    last_event_ms: u64,
+}
+
+/// Accumulator for relative knob steps. Each detent is one step; the mixer
+/// never reports a position, so there is no wall to hit.
+#[derive(Default)]
+struct KnobBank {
+    knobs: [KnobState; 8],
+}
+
+impl KnobBank {
+    fn adjust_relative(
+        &mut self,
+        index: usize,
+        value: u8,
+        base_percent: u8,
+        now_ms: u64,
+        up: u8,
+        down: u8,
+    ) -> Option<u8> {
+        let state = &mut self.knobs[index];
+        let idle = now_ms.saturating_sub(state.last_event_ms);
+        if !state.seeded || idle > KNOB_RESYNC_MS {
+            state.percent = f32::from(base_percent);
+            state.seeded = true;
+        }
+        state.last_event_ms = now_ms;
+
+        let delta = relative_delta(value, up, down);
+        let before = state.percent;
+        state.percent = (state.percent + f32::from(delta)).clamp(0.0, 100.0);
+        if (state.percent - before).abs() < 0.5 {
+            return None;
+        }
+        Some(state.percent.round() as u8)
+    }
+}
+
+#[derive(Default)]
+struct AxisState {
+    pickup: PickupState,
+    knobs: KnobBank,
+}
+
+#[derive(Clone, Copy, Default)]
+struct AxisModes {
+    pickup: bool,
+    relative: bool,
+    up: u8,
+    down: u8,
+}
+
 fn now_millis() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -587,8 +680,8 @@ fn handle_axis(
     engine: &Engine,
     commands: &Sender<DaemonRequest>,
     swap: &AtomicU8,
-    pickup: &mut PickupState,
-    pickup_enabled: bool,
+    state: &mut AxisState,
+    modes: AxisModes,
 ) {
     let (index, is_knob) = match control {
         40..=47 => ((control - 40) as usize, false),
@@ -624,15 +717,27 @@ fn handle_axis(
     };
 
     let axis = usize::from(is_knob);
-    let Some(percent) = pickup.filter(
-        index,
-        axis,
-        value,
-        target_percent,
-        channel.id,
-        pickup_enabled,
-    ) else {
-        return;
+    let percent = if is_knob && modes.relative {
+        let Some(percent) = state.knobs.adjust_relative(
+            index,
+            value,
+            target_percent,
+            now_millis(),
+            modes.up,
+            modes.down,
+        ) else {
+            return;
+        };
+        percent
+    } else {
+        let Some(percent) =
+            state
+                .pickup
+                .filter(index, axis, value, target_percent, channel.id, modes.pickup)
+        else {
+            return;
+        };
+        percent
     };
 
     let request = match channel.kind {
@@ -797,7 +902,10 @@ fn startup_pattern(elapsed_ms: u64) -> Option<[u8; 32]> {
 
 #[cfg(test)]
 mod tests {
-    use super::{LED_OFF, LED_ON, choose_index, device_key, led_pattern, output_candidates};
+    use super::{
+        KnobBank, LED_OFF, LED_ON, choose_index, device_key, led_pattern, output_candidates,
+        relative_delta,
+    };
     use pipeweaver_smc_core::config::MidiMode;
     use pipeweaver_smc_core::engine::Snapshot;
 
@@ -847,5 +955,38 @@ mod tests {
 
         snapshot.connected = false;
         assert_eq!(led_pattern(&snapshot, 0), [LED_OFF; 32]);
+    }
+
+    #[test]
+    fn relative_steps_follow_the_configured_values() {
+        assert_eq!(relative_delta(65, 65, 1), 1);
+        assert_eq!(relative_delta(1, 65, 1), -1);
+        assert_eq!(relative_delta(127, 0, 127), -1);
+        assert_eq!(relative_delta(0, 0, 127), 1);
+        assert_eq!(relative_delta(66, 65, 1), 1);
+        assert_eq!(relative_delta(2, 65, 1), -1);
+    }
+
+    #[test]
+    fn relative_knobs_step_from_the_current_value() {
+        let mut bank = KnobBank::default();
+        assert_eq!(bank.adjust_relative(0, 65, 50, 1_000, 65, 1), Some(51));
+        assert_eq!(bank.adjust_relative(0, 1, 50, 1_050, 65, 1), Some(50));
+        assert_eq!(bank.adjust_relative(0, 1, 50, 1_100, 65, 1), Some(49));
+    }
+
+    #[test]
+    fn relative_knobs_clamp_at_the_limits() {
+        let mut bank = KnobBank::default();
+        assert_eq!(bank.adjust_relative(0, 65, 100, 1_000, 65, 1), None);
+        // Long idle reseeds from the on-screen value before the step.
+        assert_eq!(bank.adjust_relative(0, 1, 0, 2_000, 65, 1), None);
+    }
+
+    #[test]
+    fn relative_knobs_resync_after_a_pause() {
+        let mut bank = KnobBank::default();
+        assert_eq!(bank.adjust_relative(0, 65, 50, 1_000, 65, 1), Some(51));
+        assert_eq!(bank.adjust_relative(0, 65, 30, 3_000, 65, 1), Some(31));
     }
 }

@@ -27,13 +27,6 @@ the initial documentation.
 - Deduplicate the app name and id constants.
 - Remove the dead handler command channel.
 
-### Features
-
-- **Endless knob pickup mode.** The SMC knobs are endless encoders. Make each
-  knob move from the current Pipeweaver value in either direction instead of
-  treating the CC as an absolute position. Confirm the actual MIDI messages
-  first, then add the relative handling.
-
 ## Later
 
 - Clip off-surface card titles.

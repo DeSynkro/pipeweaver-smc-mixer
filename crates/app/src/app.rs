@@ -1,3 +1,7 @@
+use crate::knob_mode::{
+    KnobMode, MODE_ABSOLUTE, MODE_RELATIVE, MODE_UNKNOWN, REQUEST_DETECT, REQUEST_DISABLE,
+    REQUEST_ENABLE, REQUEST_RESTORE,
+};
 use crate::media::MediaCommand;
 use crate::midi::Link;
 use crate::theme::{self, Map};
@@ -8,7 +12,7 @@ use egui::{
 };
 use pipeweaver_ipc::commands::{APICommand, DaemonRequest};
 use pipeweaver_shared::{Mix, MuteState, MuteTarget};
-use pipeweaver_smc_core::config::{Config, MidiMode, autostart_path, set_autostart};
+use pipeweaver_smc_core::config::{Config, MidiMode, autostart_path, set_autostart, state_dir};
 use pipeweaver_smc_core::{
     Channel, ChannelKind, Engine, STRIP_COUNT, SURFACE_SOURCES_DEFAULT, SURFACE_SOURCES_MAX,
     SURFACE_SOURCES_MIN, Snapshot,
@@ -25,6 +29,36 @@ use ulid::Ulid;
 enum Screen {
     Mixer,
     Config,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum KnobAction {
+    Enable,
+    Disable,
+    Restore,
+}
+
+#[derive(Clone, Copy)]
+enum Span {
+    Plain,
+    Strong,
+    Underline,
+}
+
+/// A wrapped paragraph made of differently styled spans.
+fn rich_spans(ui: &mut egui::Ui, size: f32, palette: &theme::Palette, spans: &[(&str, Span)]) {
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        for (text, style) in spans {
+            let mut rich = RichText::new(*text).size(size).color(palette.dim);
+            rich = match style {
+                Span::Plain => rich,
+                Span::Strong => rich.strong().color(palette.text),
+                Span::Underline => rich.underline().color(palette.text),
+            };
+            ui.label(rich);
+        }
+    });
 }
 
 fn monitor_rect(frame: &eframe::Frame) -> Option<Rect> {
@@ -62,6 +96,9 @@ pub struct SmcApp {
     midi_mode: Arc<AtomicU8>,
     swap: Arc<AtomicU8>,
     pickup_net: Arc<AtomicBool>,
+    knob_mode: Arc<KnobMode>,
+    knob_action: Option<KnobAction>,
+    knob_info_open: bool,
     commands: Sender<DaemonRequest>,
     drawer_open: bool,
     drawer_t: f32,
@@ -102,6 +139,7 @@ impl SmcApp {
         midi_mode: Arc<AtomicU8>,
         swap: Arc<AtomicU8>,
         pickup_net: Arc<AtomicBool>,
+        knob_mode: Arc<KnobMode>,
         commands: Sender<DaemonRequest>,
         media_tx: tokio::sync::mpsc::UnboundedSender<MediaCommand>,
         record_hex: Arc<AtomicBool>,
@@ -127,6 +165,9 @@ impl SmcApp {
             midi_mode,
             swap,
             pickup_net,
+            knob_mode,
+            knob_action: None,
+            knob_info_open: false,
             commands,
             drawer_open: false,
             drawer_t: 0.0,
@@ -1157,6 +1198,13 @@ impl SmcApp {
             );
             if response.clicked() {
                 self.screen = screen;
+                if screen == Screen::Config {
+                    // Pick up a mode changed outside the app (vendor editor,
+                    // preset switch) without polling the mixer.
+                    self.knob_mode
+                        .request
+                        .store(REQUEST_DETECT, Ordering::Relaxed);
+                }
             }
         }
     }
@@ -1179,6 +1227,11 @@ impl SmcApp {
         let width = self.window_width;
         let mut light = self.config.light_panel;
         let mut pickup = self.pickup_net.load(Ordering::Relaxed);
+        let knob_mode = self.knob_mode.mode.load(Ordering::Relaxed);
+        let knob_busy = self.knob_mode.busy.load(Ordering::Relaxed);
+        let knob_detail = self.knob_mode.detail();
+        let mut knob_click = None;
+        let mut open_knob_info = false;
         let mut channel_colours = self.config.channel_colours;
         let mut hide_off_surface = self.config.hide_off_surface;
         let mut record_hex = self.record_hex.load(Ordering::Relaxed);
@@ -1446,6 +1499,76 @@ impl SmcApp {
                             .color(palette.text),
                     );
                     columns[1].horizontal(|ui| {
+                        let mut checked = knob_mode == MODE_RELATIVE;
+                        let unknown = knob_mode == MODE_UNKNOWN;
+                        let response = ui.add_enabled(
+                            !knob_busy && !unknown,
+                            egui::Checkbox::new(&mut checked, "Endless knobs").indeterminate(unknown),
+                        );
+                        if response.changed() {
+                            knob_click = Some(if checked {
+                                KnobAction::Enable
+                            } else {
+                                KnobAction::Disable
+                            });
+                        }
+                        if ui
+                            .small_button("i")
+                            .on_hover_text("How endless knobs work")
+                            .clicked()
+                        {
+                            open_knob_info = true;
+                        }
+                    });
+                    if knob_busy {
+                        columns[1].label(
+                            RichText::new("Mixer Mode: talking to the mixer...")
+                                .size(label)
+                                .color(palette.dim),
+                        );
+                    } else {
+                        let (mode_text, detail_text, colour) = match knob_mode {
+                            MODE_RELATIVE => (
+                                "Relative Mode",
+                                "Knobs send steps and never hit the ends.",
+                                palette.green,
+                            ),
+                            MODE_ABSOLUTE => (
+                                "Absolute Mode",
+                                "Turning it on changes the mixer's mode to Relative mode.",
+                                palette.green,
+                            ),
+                            _ => (
+                                "Unknown",
+                                "Connect the SMC-Mixer to read its mode.",
+                                palette.amber,
+                            ),
+                        };
+                        columns[1].horizontal_wrapped(|ui| {
+                            ui.spacing_mut().item_spacing.x = 0.0;
+                            ui.label(
+                                RichText::new("Mixer Mode: ")
+                                    .size(label)
+                                    .strong()
+                                    .color(palette.text),
+                            );
+                            ui.label(
+                                RichText::new(mode_text)
+                                    .size(label)
+                                    .strong()
+                                    .color(colour),
+                            );
+                        });
+                        columns[1].label(
+                            RichText::new(detail_text).size(label).color(palette.dim),
+                        );
+                    }
+                    if let Some(error) = knob_detail.error.as_deref() {
+                        columns[1].label(RichText::new(error).size(label).color(palette.red));
+                    } else if let Some(note) = knob_detail.note.as_deref() {
+                        columns[1].label(RichText::new(note).size(label).color(palette.amber));
+                    }
+                    columns[1].horizontal(|ui| {
                         ui.checkbox(&mut record_hex, "Record button switches to");
                         ui.hyperlink_to("Hex", "https://github.com/anomalyco/hex");
                     });
@@ -1710,6 +1833,191 @@ impl SmcApp {
         }
         if reset {
             self.set_window_width(1280.0, ctx, monitor);
+        }
+        if let Some(action) = knob_click {
+            self.knob_action = Some(action);
+        }
+        if open_knob_info {
+            self.knob_info_open = true;
+        }
+        self.paint_knob_warning(ctx, map, palette);
+        self.paint_knob_info(ctx, map, palette);
+    }
+
+    fn paint_knob_warning(&mut self, ctx: &Context, map: &Map, palette: &'static theme::Palette) {
+        let Some(action) = self.knob_action else {
+            return;
+        };
+        let detail = self.knob_mode.detail();
+        let mut apply = false;
+        let mut cancel = false;
+        egui::Modal::new(Id::unique("knob-mode-warning")).show(ctx, |ui| {
+            ui.set_max_width(480.0 * map.scale);
+            ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
+            let heading = (20.0 * map.scale).max(15.0);
+            let body = (15.0 * map.scale).max(11.0);
+            let title = match action {
+                KnobAction::Enable => "Switch the mixer to Relative mode?",
+                KnobAction::Disable => "Switch the mixer back to Absolute mode?",
+                KnobAction::Restore => "Restore the saved mixer configuration?",
+            };
+            ui.label(RichText::new(title).size(heading).strong().color(palette.text));
+            let text = match action {
+                KnobAction::Enable => {
+                    "Endless knobs need the mixer to send step pulses instead of a knob position. That setting lives in the mixer itself, so this changes it for every app and machine that uses it. Any other app and any DAW listening on CC 30-37 will see the new behaviour too.\n\nOnly the eight knobs in the preset the app uses change. A full backup is saved first. Unchecking Endless knobs, or restoring the backup, returns to how it was."
+                }
+                KnobAction::Disable => {
+                    "The mixer will switch to Absolute mode and send knob position, so the knobs stop at 0 and 127. Only the eight knobs in the preset the app uses are affected. A backup is saved first and the change is kept in the mixer."
+                }
+                KnobAction::Restore => {
+                    "The full user preset block from the saved backup is written back to the mixer and kept in its memory. The selected preset is left alone."
+                }
+            };
+            ui.label(RichText::new(text).size(body).color(palette.dim));
+            if action != KnobAction::Restore {
+                ui.label(
+                    RichText::new(format!(
+                        "Backups: {}",
+                        state_dir().join("mixer-backups").display()
+                    ))
+                    .size(body)
+                    .color(palette.dim),
+                );
+            } else if let Some(backup) = detail.backup.as_ref() {
+                ui.label(
+                    RichText::new(format!("Restoring: {}", backup.display()))
+                        .size(body)
+                        .color(palette.dim),
+                );
+            }
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                if ui.button("Cancel").clicked() {
+                    cancel = true;
+                }
+                let apply_text = match action {
+                    KnobAction::Enable => "Apply and switch to relative",
+                    KnobAction::Disable => "Apply and switch to absolute",
+                    KnobAction::Restore => "Restore backup",
+                };
+                if ui.button(apply_text).clicked() {
+                    apply = true;
+                }
+            });
+        });
+        if apply {
+            let request = match action {
+                KnobAction::Enable => REQUEST_ENABLE,
+                KnobAction::Disable => REQUEST_DISABLE,
+                KnobAction::Restore => REQUEST_RESTORE,
+            };
+            self.knob_mode.request.store(request, Ordering::Relaxed);
+            self.knob_action = None;
+        } else if cancel {
+            self.knob_action = None;
+        }
+    }
+
+    fn paint_knob_info(&mut self, ctx: &Context, map: &Map, palette: &'static theme::Palette) {
+        if !self.knob_info_open {
+            return;
+        }
+        let detail = self.knob_mode.detail();
+        let mut close = false;
+        let mut restore = false;
+        egui::Modal::new(Id::unique("knob-info")).show(ctx, |ui| {
+            ui.set_max_width(500.0 * map.scale);
+            ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
+            let heading = (20.0 * map.scale).max(15.0);
+            let body = (15.0 * map.scale).max(11.0);
+            ui.label(
+                RichText::new("Endless knobs and the mixer's relative mode")
+                    .size(heading)
+                    .strong()
+                    .color(palette.text),
+            );
+            ui.label(
+                RichText::new("The following settings change the internal settings of your mixer.")
+                    .size(body)
+                    .strong()
+                    .color(palette.red),
+            );
+            ui.add_space(2.0);
+            rich_spans(
+                ui,
+                body,
+                palette,
+                &[
+                    ("In ", Span::Plain),
+                    ("Absolute", Span::Strong),
+                    (
+                        " mode the mixer reports the knob's physical position, 0-127. When a knob reaches either end it has nothing left to send, so it stops. ",
+                        Span::Plain,
+                    ),
+                    ("That is a hardware limit", Span::Underline),
+                    (", not something the app can work around.", Span::Plain),
+                ],
+            );
+            rich_spans(
+                ui,
+                body,
+                palette,
+                &[
+                    ("In ", Span::Plain),
+                    ("Relative", Span::Strong),
+                    (
+                        " mode the mixer sends one small step per detent, in either direction. There is no position to run out of, so the app can keep turning the value forever.",
+                        Span::Plain,
+                    ),
+                ],
+            );
+            ui.label(
+                RichText::new(
+                    "The setting is stored in the mixer's internal configuration, so it applies to every app and machine that uses the mixer. Only the eight knob records on CC 30-37 are changed. Buttons, faders, LEDs and the factory DAW preset are untouched.",
+                )
+                .size(body)
+                .color(palette.dim),
+            );
+            rich_spans(
+                ui,
+                body,
+                palette,
+                &[
+                    ("Endless Knobs requires ", Span::Plain),
+                    ("Relative", Span::Strong),
+                    (
+                        " mode. The app only reads the mode your mixer is currently using, and changes the mixer only when you use this checkbox. With your consent, Pipeweaver SMC Mixer switches Relative mode on after the warning so Endless Knobs can work. A full backup is saved first. You can switch back to ",
+                        Span::Plain,
+                    ),
+                    ("Absolute", Span::Strong),
+                    (
+                        " by unchecking the box or by restoring the backup.",
+                        Span::Plain,
+                    ),
+                ],
+            );
+            if let Some(backup) = detail.backup.as_ref() {
+                ui.label(
+                    RichText::new(format!("Last backup: {}", backup.display()))
+                        .size(body)
+                        .color(palette.dim),
+                );
+            }
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                if ui.button("Close").clicked() {
+                    close = true;
+                }
+                if detail.backup.is_some() && ui.button("Restore last backup").clicked() {
+                    restore = true;
+                }
+            });
+        });
+        if restore {
+            self.knob_info_open = false;
+            self.knob_action = Some(KnobAction::Restore);
+        } else if close {
+            self.knob_info_open = false;
         }
     }
 

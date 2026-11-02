@@ -1,4 +1,5 @@
 mod app;
+mod knob_mode;
 mod media;
 mod meters;
 mod midi;
@@ -52,6 +53,7 @@ async fn main() -> Result<()> {
     let minimized = Arc::new(AtomicBool::new(false));
     let midi_mode = Arc::new(AtomicU8::new(initial.midi_mode.code()));
     let pickup = Arc::new(AtomicBool::new(initial.pickup));
+    let knob_mode = Arc::new(knob_mode::KnobMode::default());
     let record_hex = Arc::new(AtomicBool::new(initial.record_hex));
 
     let tray_context = Arc::new(tray::TrayContext {
@@ -176,6 +178,7 @@ async fn main() -> Result<()> {
         let engine = engine.clone();
         let swap = swap.clone();
         let pickup = pickup.clone();
+        let midi_knob_mode = knob_mode.clone();
         let midi_media = media_tx.clone();
         let midi_ui_on = ui_on.clone();
         let midi_focus = focus.clone();
@@ -195,6 +198,7 @@ async fn main() -> Result<()> {
                 command_tx,
                 swap,
                 pickup,
+                midi_knob_mode,
                 midi_media,
                 midi_ui_on,
                 midi_focus,
@@ -226,6 +230,7 @@ async fn main() -> Result<()> {
             let midi_link = midi_link.clone();
             let swap = swap.clone();
             let pickup = pickup.clone();
+            let ui_knob_mode = knob_mode.clone();
             let ui_commands = ui_commands.clone();
             let media_tx = media_tx.clone();
             let record_hex = record_hex.clone();
@@ -257,6 +262,7 @@ async fn main() -> Result<()> {
                         midi_mode,
                         swap,
                         pickup,
+                        ui_knob_mode,
                         ui_commands,
                         media_tx,
                         record_hex,

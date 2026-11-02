@@ -112,6 +112,7 @@ chmod +x Pipeweaver-SMC-Mixer-1.0.0-x86_64.AppImage
 - **Fixed SMC mapping:** faders, knobs, M/S/R and the link button, all on the documented CCs. No learn mode.
 - **Personal and Audience:** faders control the A mix, knobs control the B mix, R swaps them per strip.
 - **Soft takeover:** faders and knobs wait for the current value before taking over.
+- **Endless knobs:** in relative mode every detent is one step in either direction, so the knobs never hit the mixer's 0/127 limits. The app detects the mode and can switch the preset it uses on the mixer, with a warning and a full backup first.
 - **Targets:** target faders, mutes and explicit A/B routing. The bar follows the active mix.
 - **Split:** share the eight strips between sources and targets, from 8/0 down to 4/4. Default is 6/2.
 - **Off-surface channels:** extra sources and targets stay reachable in a drawer. It can be hidden in Config.
@@ -153,6 +154,12 @@ On source strips the second button is labelled **A** on screen but corresponds t
 
 If the controls do not respond, the mixer may have been remapped or be on a different preset slot.
 
+The factory preset reports an absolute 0–127 knob position and stops at each end. That is a hardware limit: once the knob reaches 0 or 127 there is nothing left to send.
+
+To get unlimited travel, enable **Endless knobs** in Config. The app reads the mixer's current mode first; switching it asks for confirmation, saves a full mixer backup, and changes only the eight knob records of the preset that uses CC 30–37. The mixer then sends one step per detent instead of a position. The change is stored in the mixer, so it applies to other apps and machines too; the info panel explains this and can restore the last backup. The factory DAW preset is not touched.
+
+If the preset used by the app is left in absolute mode, the knobs still work with soft takeover.
+
 ## Setup
 
 1. Start Pipeweaver and make sure the daemon is online.
@@ -171,7 +178,7 @@ The app keeps a small config file at:
 ~/.config/pipeweaver/pipeweaver-smc-mixer.json
 ```
 
-It stores the connection mode, MIDI device name, mix labels, split, window width, light theme, channel colours, soft takeover, off-surface drawer visibility, record/Hex mode, startup animation and start-minimized preference.
+It stores the connection mode, MIDI device name, mix labels, split, window width, light theme, channel colours, soft takeover, off-surface drawer visibility, record/Hex mode, startup animation and start-minimized preference. The knob mode is not stored here; it is read from the mixer. Mixer backups are kept in `~/.local/state/pipeweaver-smc-mixer/mixer-backups`.
 
 No audio, no daemon data and no telemetry leave your machine. The app only talks to Pipeweaver on localhost and to the mixer over MIDI.
 
