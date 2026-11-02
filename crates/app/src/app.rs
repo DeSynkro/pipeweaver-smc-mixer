@@ -1572,13 +1572,36 @@ impl SmcApp {
                         ui.checkbox(&mut record_hex, "Record button switches to");
                         ui.hyperlink_to("Hex", "https://github.com/anomalyco/hex");
                     });
-                    columns[1].label(
-                        RichText::new(
-                            "On: hold the record button to dictate with Hex. Off: press to mute or unmute the default microphone.",
-                        )
-                        .size(label)
-                        .color(palette.dim),
-                    );
+                    columns[1].horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing.x = 0.0;
+                        ui.label(
+                            RichText::new("On")
+                                .size(label)
+                                .strong()
+                                .color(palette.green),
+                        );
+                        ui.label(
+                            RichText::new(": hold the record button to dictate with Hex.")
+                                .size(label)
+                                .color(palette.dim),
+                        );
+                    });
+                    columns[1].horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing.x = 0.0;
+                        ui.label(
+                            RichText::new("Off")
+                                .size(label)
+                                .strong()
+                                .color(palette.red),
+                        );
+                        ui.label(
+                            RichText::new(
+                                ": press to mute or unmute the default microphone.",
+                            )
+                            .size(label)
+                            .color(palette.dim),
+                        );
+                    });
                     let mic_muted = self.mic_muted.load(Ordering::Relaxed);
                     columns[1].label(
                         RichText::new(format!(

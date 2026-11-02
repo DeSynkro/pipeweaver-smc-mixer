@@ -54,7 +54,7 @@ fn default_pickup() -> bool {
 }
 
 fn default_record_hex() -> bool {
-    true
+    false
 }
 
 fn default_startup_animation() -> bool {
