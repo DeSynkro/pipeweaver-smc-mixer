@@ -127,7 +127,7 @@ async fn main() -> Result<()> {
     ));
     let (command_tx, mut command_rx) = tokio::sync::mpsc::channel(1024);
     {
-        let (broadcast_tx, mut broadcast_rx) = tokio::sync::broadcast::channel(10);
+        let (broadcast_tx, mut broadcast_rx) = tokio::sync::broadcast::channel(64);
         let (handler_tx, handler_rx) = tokio::sync::mpsc::channel(1);
         let stop_handler = spawn_pipeweaver_handler(handler_rx, broadcast_tx).await;
         drop(handler_tx);
@@ -152,17 +152,40 @@ async fn main() -> Result<()> {
         let engine = engine.clone();
         tokio::spawn(async move {
             let _stop_handler = stop_handler;
-            while let Ok(message) = broadcast_rx.recv().await {
-                match message {
-                    BroadcastMessage::Online => engine.set_connected(true),
-                    BroadcastMessage::Offline => {
+            let mut client = WebClient::new(String::from("http://localhost:14565/api/command"));
+            loop {
+                match broadcast_rx.recv().await {
+                    Ok(BroadcastMessage::Online) => engine.set_connected(true),
+                    Ok(BroadcastMessage::Offline) => {
                         engine.set_connected(false);
                         engine.clear_meters();
                     }
-                    BroadcastMessage::Status(status) => {
+                    Ok(BroadcastMessage::Status(status)) => {
                         engine.set_connected(true);
                         engine.apply(*status);
                     }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                        // Patches were dropped, so the local state is stale.
+                        // Fetch a full status over HTTP and keep the loop
+                        // alive; closing the receiver here used to freeze the
+                        // whole surface until the app restarted.
+                        log::warn!(
+                            "Pipeweaver status stream lagged by {skipped} updates; resyncing"
+                        );
+                        match tokio::time::timeout(Duration::from_secs(2), client.get_status())
+                            .await
+                        {
+                            Ok(Ok(status)) => {
+                                engine.set_connected(true);
+                                engine.apply(status);
+                            }
+                            Ok(Err(error)) => {
+                                log::warn!("Pipeweaver status resync failed: {error:#}");
+                            }
+                            Err(_) => log::warn!("Pipeweaver status resync timed out"),
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 }
             }
         });
