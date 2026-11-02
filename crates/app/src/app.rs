@@ -676,10 +676,8 @@ impl SmcApp {
                         _ => (
                             "■",
                             palette.text,
-                            !channel.linked,
-                            String::from(
-                                "Link both mixes for this strip; lit = unlinked (knob active)",
-                            ),
+                            channel.linked,
+                            String::from("Link both mixes for this strip; lit = linked"),
                         ),
                     }
                 } else {

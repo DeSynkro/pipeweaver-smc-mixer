@@ -848,7 +848,7 @@ fn led_pattern(snapshot: &Snapshot, swapped: u8) -> [u8; 32] {
             _ => LED_OFF,
         };
         desired[24 + index] = match channel.kind {
-            ChannelKind::Source if !channel.linked => LED_ON,
+            ChannelKind::Source if channel.linked => LED_ON,
             _ => LED_OFF,
         };
     }
@@ -951,7 +951,10 @@ mod tests {
 
         let live = led_pattern(&snapshot, 0);
         assert_eq!(live[16], LED_ON);
-        assert_eq!(live[24], LED_ON);
+        assert_eq!(live[24], LED_OFF);
+
+        snapshot.channels[0].linked = true;
+        assert_eq!(led_pattern(&snapshot, 0)[24], LED_ON);
 
         snapshot.connected = false;
         assert_eq!(led_pattern(&snapshot, 0), [LED_OFF; 32]);
