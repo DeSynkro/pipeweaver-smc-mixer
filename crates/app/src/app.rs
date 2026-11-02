@@ -1440,6 +1440,70 @@ impl SmcApp {
                             .color(palette.dim),
                     );
 
+                    columns[0].add_space(12.0);
+                    columns[0].label(
+                        RichText::new("About")
+                            .size(section)
+                            .strong()
+                            .color(palette.text),
+                    );
+                    columns[0].label(
+                        RichText::new(format!(
+                            "Pipeweaver SMC Mixer {}",
+                            theme::VERSION
+                        ))
+                        .size(label)
+                        .color(palette.text),
+                    );
+                    columns[0].horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 10.0 * map.scale;
+                        ui.hyperlink_to(
+                            RichText::new("GitHub").size(label).color(palette.accent),
+                            "https://github.com/DeSynkro",
+                        );
+                        ui.hyperlink_to(
+                            RichText::new("Codeberg").size(label).color(palette.accent),
+                            "https://codeberg.org/DeSynkro",
+                        );
+                    });
+                    let time = ctx.input(|input| input.time) as f32;
+                    let phase = (time / 1.6).fract();
+                    let bump = |centre: f32, width: f32| {
+                        let distance = (phase - centre).abs();
+                        if distance >= width {
+                            0.0
+                        } else {
+                            0.5 + 0.5 * (distance / width * std::f32::consts::PI).cos()
+                        }
+                    };
+                    let pulse = (bump(0.22, 0.18) + 0.5 * bump(0.52, 0.14)).min(1.0);
+                    let eased = pulse * pulse * (3.0 - 2.0 * pulse);
+                    let heart_size = ((13.0 + 2.4 * eased) * map.scale).max(9.0);
+                    columns[0].horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0 * map.scale;
+                        ui.label(
+                            RichText::new("BUILT WITH")
+                                .size(label)
+                                .color(palette.dim),
+                        );
+                        let (rect, _) = ui.allocate_exact_size(
+                            vec2(18.0 * map.scale, 18.0 * map.scale),
+                            Sense::hover(),
+                        );
+                        ui.painter().text(
+                            rect.center(),
+                            Align2::CENTER_CENTER,
+                            "♥",
+                            FontId::proportional(heart_size),
+                            palette.red,
+                        );
+                        ui.label(RichText::new("BY").size(label).color(palette.dim));
+                        ui.hyperlink_to(
+                            RichText::new("DESYNKRO").size(label).color(palette.accent),
+                            "https://desynkro.com",
+                        );
+                    });
+
                     columns[1].label(
                         RichText::new("Connection")
                             .size(section)
@@ -1821,69 +1885,6 @@ impl SmcApp {
                         );
                     }
 
-                    columns[1].add_space(12.0);
-                    columns[1].label(
-                        RichText::new("About")
-                            .size(section)
-                            .strong()
-                            .color(palette.text),
-                    );
-                    columns[1].label(
-                        RichText::new(format!(
-                            "Pipeweaver SMC Mixer {}",
-                            theme::VERSION
-                        ))
-                        .size(label)
-                        .color(palette.text),
-                    );
-                    columns[1].horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 10.0 * map.scale;
-                        ui.hyperlink_to(
-                            RichText::new("GitHub").size(label).color(palette.accent),
-                            "https://github.com/DeSynkro",
-                        );
-                        ui.hyperlink_to(
-                            RichText::new("Codeberg").size(label).color(palette.accent),
-                            "https://codeberg.org/DeSynkro",
-                        );
-                    });
-                    let time = ctx.input(|input| input.time) as f32;
-                    let phase = (time / 1.6).fract();
-                    let bump = |centre: f32, width: f32| {
-                        let distance = (phase - centre).abs();
-                        if distance >= width {
-                            0.0
-                        } else {
-                            0.5 + 0.5 * (distance / width * std::f32::consts::PI).cos()
-                        }
-                    };
-                    let pulse = (bump(0.22, 0.18) + 0.5 * bump(0.52, 0.14)).min(1.0);
-                    let eased = pulse * pulse * (3.0 - 2.0 * pulse);
-                    let heart_size = ((13.0 + 2.4 * eased) * map.scale).max(9.0);
-                    columns[1].horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 4.0 * map.scale;
-                        ui.label(
-                            RichText::new("BUILT WITH")
-                                .size(label)
-                                .color(palette.dim),
-                        );
-                        let (rect, _) = ui.allocate_exact_size(
-                            vec2(18.0 * map.scale, 18.0 * map.scale),
-                            Sense::hover(),
-                        );
-                        ui.painter().text(
-                            rect.center(),
-                            Align2::CENTER_CENTER,
-                            "♥",
-                            FontId::proportional(heart_size),
-                            palette.red,
-                        );
-                        ui.label(RichText::new("BY").size(label).color(palette.dim));
-                        ui.hyperlink_to(
-                            RichText::new("DESYNKRO").size(label).color(palette.accent),
-                            "https://desynkro.com",
-                        );
-                    });
                     columns[1].add_space(12.0);
                     if config_button(
                         &mut columns[1],
