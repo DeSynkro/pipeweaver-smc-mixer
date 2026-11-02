@@ -374,13 +374,14 @@ pub fn run_controls(
         loop {
             if stop.load(Ordering::Relaxed) {
                 if let Some(output) = output.as_mut() {
-                    for note in 0..32 {
-                        let _ = output.send(&[0x90, note, 0]);
-                    }
+                    blackout(output);
                 }
                 return;
             }
             if knob_mode.request.load(Ordering::Relaxed) != REQUEST_NONE {
+                if let Some(output) = output.as_mut() {
+                    blackout(output);
+                }
                 break;
             }
             if animation_preview.swap(false, Ordering::Relaxed) {
@@ -414,16 +415,29 @@ pub fn run_controls(
                 let link = midi_link.load(Ordering::Relaxed);
                 if link != last_link {
                     last_link = link;
+                    if let Some(output) = output.as_mut() {
+                        blackout(output);
+                    }
                     break;
                 }
                 let latest = Config::load(&config_path);
                 if latest.midi_mode != config.midi_mode || latest.midi_device != config.midi_device
                 {
                     config = latest;
+                    if let Some(output) = output.as_mut() {
+                        blackout(output);
+                    }
                     break;
                 }
             }
         }
+    }
+}
+
+/// Turn every surface LED off before the output is dropped.
+fn blackout(output: &mut MidiOutputConnection) {
+    for note in 0..32 {
+        let _ = output.send(&[0x90, note, 0]);
     }
 }
 
