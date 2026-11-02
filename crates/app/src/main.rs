@@ -57,6 +57,7 @@ async fn main() -> Result<()> {
     let record_hex = Arc::new(AtomicBool::new(initial.record_hex));
     let hex_latch = Arc::new(AtomicBool::new(initial.hex_latch));
     let hex_active = Arc::new(AtomicBool::new(false));
+    let (media_tx, media_rx) = tokio::sync::mpsc::unbounded_channel();
 
     let tray_context = Arc::new(tray::TrayContext {
         ui_on: ui_on.clone(),
@@ -66,6 +67,9 @@ async fn main() -> Result<()> {
         midi_mode: midi_mode.clone(),
         pickup: pickup.clone(),
         record_hex: record_hex.clone(),
+        hex_latch: hex_latch.clone(),
+        hex_active: hex_active.clone(),
+        media: media_tx.clone(),
         config_path: config_path.clone(),
     });
     let tray_ready = Arc::new(AtomicBool::new(false));
@@ -153,7 +157,6 @@ async fn main() -> Result<()> {
 
     let engine = Engine::new(initial.surface_sources);
     let mic_muted = Arc::new(AtomicBool::new(false));
-    let (media_tx, media_rx) = tokio::sync::mpsc::unbounded_channel();
     tokio::spawn(media::run(
         media_rx,
         ui_on.clone(),

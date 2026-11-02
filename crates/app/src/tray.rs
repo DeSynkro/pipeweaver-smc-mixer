@@ -1,3 +1,4 @@
+use crate::media::MediaCommand;
 use crate::theme;
 use eframe::egui;
 use image::GenericImageView;
@@ -18,6 +19,9 @@ pub struct TrayContext {
     pub midi_mode: Arc<AtomicU8>,
     pub pickup: Arc<AtomicBool>,
     pub record_hex: Arc<AtomicBool>,
+    pub hex_latch: Arc<AtomicBool>,
+    pub hex_active: Arc<AtomicBool>,
+    pub media: mpsc::UnboundedSender<MediaCommand>,
     pub config_path: PathBuf,
 }
 
@@ -40,6 +44,7 @@ pub async fn spawn(
     let mut last_midi_mode = context.midi_mode.load(Ordering::Relaxed);
     let mut last_pickup = context.pickup.load(Ordering::Relaxed);
     let mut last_record_hex = context.record_hex.load(Ordering::Relaxed);
+    let mut last_hex_latch = context.hex_latch.load(Ordering::Relaxed);
 
     loop {
         tokio::select! {
@@ -60,12 +65,14 @@ pub async fn spawn(
                             MidiMode::from_code(context.midi_mode.load(Ordering::Relaxed));
                         config.pickup = context.pickup.load(Ordering::Relaxed);
                         config.record_hex = context.record_hex.load(Ordering::Relaxed);
+                        config.hex_latch = context.hex_latch.load(Ordering::Relaxed);
                         if let Err(error) = config.save(&context.config_path) {
                             log::warn!("Could not save config from tray: {error:#}");
                         }
                         last_midi_mode = context.midi_mode.load(Ordering::Relaxed);
                         last_pickup = context.pickup.load(Ordering::Relaxed);
                         last_record_hex = context.record_hex.load(Ordering::Relaxed);
+                        last_hex_latch = context.hex_latch.load(Ordering::Relaxed);
                         let _ = handle.update(|_| {}).await;
                     }
                     TrayMessage::Quit => {
@@ -84,13 +91,16 @@ pub async fn spawn(
                 let midi_mode = context.midi_mode.load(Ordering::Relaxed);
                 let pickup = context.pickup.load(Ordering::Relaxed);
                 let record_hex = context.record_hex.load(Ordering::Relaxed);
+                let hex_latch = context.hex_latch.load(Ordering::Relaxed);
                 if midi_mode != last_midi_mode
                     || pickup != last_pickup
                     || record_hex != last_record_hex
+                    || hex_latch != last_hex_latch
                 {
                     last_midi_mode = midi_mode;
                     last_pickup = pickup;
                     last_record_hex = record_hex;
+                    last_hex_latch = hex_latch;
                     let _ = handle.update(|_| {}).await;
                 }
             }
@@ -136,6 +146,18 @@ impl TrayIcon {
     fn toggle_record_hex(&mut self) {
         let next = !self.context.record_hex.load(Ordering::Relaxed);
         self.context.record_hex.store(next, Ordering::Relaxed);
+        if !next && self.context.hex_active.swap(false, Ordering::Relaxed) {
+            let _ = self.context.media.send(MediaCommand::HexStop);
+        }
+        self.settings_changed();
+    }
+
+    fn toggle_hex_latch(&mut self) {
+        let next = !self.context.hex_latch.load(Ordering::Relaxed);
+        self.context.hex_latch.store(next, Ordering::Relaxed);
+        if self.context.hex_active.swap(false, Ordering::Relaxed) {
+            let _ = self.context.media.send(MediaCommand::HexStop);
+        }
         self.settings_changed();
     }
 }
@@ -189,8 +211,9 @@ impl Tray for TrayIcon {
         let midi_mode = MidiMode::from_code(self.context.midi_mode.load(Ordering::Relaxed));
         let pickup = self.context.pickup.load(Ordering::Relaxed);
         let record_hex = self.context.record_hex.load(Ordering::Relaxed);
+        let hex_latch = self.context.hex_latch.load(Ordering::Relaxed);
 
-        vec![
+        let mut items = vec![
             StandardItem {
                 label: String::from("Show"),
                 activate: Box::new(|this: &mut TrayIcon| this.show()),
@@ -246,7 +269,20 @@ impl Tray for TrayIcon {
                 ..Default::default()
             }
             .into(),
-            MenuItem::Separator,
+        ];
+        if record_hex {
+            items.push(
+                CheckmarkItem {
+                    label: String::from("Toggle Hex Recording"),
+                    checked: hex_latch,
+                    activate: Box::new(|this: &mut TrayIcon| this.toggle_hex_latch()),
+                    ..Default::default()
+                }
+                .into(),
+            );
+        }
+        items.push(MenuItem::Separator);
+        items.push(
             StandardItem {
                 label: String::from("Quit"),
                 activate: Box::new(|this: &mut TrayIcon| {
@@ -255,7 +291,8 @@ impl Tray for TrayIcon {
                 ..Default::default()
             }
             .into(),
-        ]
+        );
+        items
     }
 
     fn activate(&mut self, _x: i32, _y: i32) {
