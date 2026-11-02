@@ -1,8 +1,55 @@
 use anyhow::{Context, Result};
 use egui::ViewportCommand;
+use std::process::Output;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+use tokio::process::Command;
 use tokio::sync::mpsc::UnboundedReceiver;
+
+const MIC_TIMEOUT: Duration = Duration::from_secs(2);
+const HEX_TIMEOUT: Duration = Duration::from_secs(5);
+const OPEN_TIMEOUT: Duration = Duration::from_secs(10);
+
+#[derive(Debug)]
+struct CommandTimeout {
+    program: String,
+    timeout: Duration,
+}
+
+impl std::fmt::Display for CommandTimeout {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "{} timed out after {:?}",
+            self.program, self.timeout
+        )
+    }
+}
+
+impl std::error::Error for CommandTimeout {}
+
+/// Run a helper program with a hard deadline. The child is killed if the
+/// deadline passes, so a stuck helper cannot hold the media queue open.
+async fn run_output(program: &str, args: &[&str], timeout: Duration) -> Result<Output> {
+    let mut command = Command::new(program);
+    command.args(args).kill_on_drop(true);
+    let started = Instant::now();
+    match tokio::time::timeout(timeout, command.output()).await {
+        Ok(Ok(output)) => {
+            let elapsed = started.elapsed();
+            if elapsed > Duration::from_secs(1) {
+                log::debug!("{program} took {elapsed:?}");
+            }
+            Ok(output)
+        }
+        Ok(Err(error)) => Err(error).with_context(|| format!("run {program}")),
+        Err(_) => Err(anyhow::Error::new(CommandTimeout {
+            program: program.to_string(),
+            timeout,
+        })),
+    }
+}
 
 /// A desktop media action triggered by a transport button.
 #[derive(Debug, Clone, Copy)]
@@ -28,12 +75,12 @@ pub async fn run(
     minimized: Arc<AtomicBool>,
     egui: Arc<Mutex<Option<egui::Context>>>,
 ) {
-    if let Some(state) = query_mic_mute() {
+    if let Some(state) = query_mic_mute().await {
         mic_muted.store(state, Ordering::Relaxed);
     }
     while let Some(command) = rx.recv().await {
         let result = match command {
-            MediaCommand::OpenPipeweaver => open_pipeweaver(),
+            MediaCommand::OpenPipeweaver => open_pipeweaver().await,
             MediaCommand::ToggleApp => {
                 if minimized.swap(false, Ordering::Relaxed) {
                     if let Some(ctx) = egui.lock().unwrap().as_ref() {
@@ -50,9 +97,9 @@ pub async fn run(
                 }
                 Ok(())
             }
-            MediaCommand::HexStart => hex_dictation("start"),
-            MediaCommand::HexStop => hex_dictation("stop"),
-            MediaCommand::ToggleMicMute => toggle_mic_mute(&mic_muted),
+            MediaCommand::HexStart => hex_dictation("start").await,
+            MediaCommand::HexStop => hex_dictation("stop").await,
+            MediaCommand::ToggleMicMute => toggle_mic_mute(&mic_muted).await,
             MediaCommand::Play
             | MediaCommand::Pause
             | MediaCommand::Previous
@@ -66,47 +113,71 @@ pub async fn run(
     }
 }
 
-fn open_pipeweaver() -> Result<()> {
-    std::process::Command::new("xdg-open")
+async fn open_pipeweaver() -> Result<()> {
+    let mut child = Command::new("xdg-open")
         .arg("http://localhost:14565")
+        .kill_on_drop(true)
         .spawn()
         .context("open the Pipeweaver UI")?;
+    // Reap the child without blocking the media queue.
+    tokio::spawn(async move {
+        let _ = tokio::time::timeout(OPEN_TIMEOUT, child.wait()).await;
+    });
     Ok(())
 }
 
-fn toggle_mic_mute(muted: &AtomicBool) -> Result<()> {
-    let toggled = std::process::Command::new("wpctl")
-        .args(["set-mute", "@DEFAULT_AUDIO_SOURCE@", "toggle"])
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false);
+async fn toggle_mic_mute(muted: &AtomicBool) -> Result<()> {
+    let wpctl = run_output(
+        "wpctl",
+        &["set-mute", "@DEFAULT_AUDIO_SOURCE@", "toggle"],
+        MIC_TIMEOUT,
+    )
+    .await;
+    let toggled = match wpctl {
+        Ok(output) => output.status.success(),
+        Err(error) if error.downcast_ref::<CommandTimeout>().is_some() => {
+            // Do not fall back after a timeout: wpctl may already have
+            // changed the mute state. A second toggle would undo it.
+            return Err(error);
+        }
+        Err(_) => false,
+    };
     if !toggled {
-        let status = std::process::Command::new("pactl")
-            .args(["set-source-mute", "@DEFAULT_SOURCE@", "toggle"])
-            .status()
-            .context("toggle the default microphone mute")?;
-        if !status.success() {
+        let output = run_output(
+            "pactl",
+            &["set-source-mute", "@DEFAULT_SOURCE@", "toggle"],
+            MIC_TIMEOUT,
+        )
+        .await
+        .context("toggle the default microphone mute")?;
+        if !output.status.success() {
             anyhow::bail!("could not toggle the default microphone mute");
         }
     }
-    if let Some(state) = query_mic_mute() {
+    if let Some(state) = query_mic_mute().await {
         muted.store(state, Ordering::Relaxed);
     }
     Ok(())
 }
 
-fn query_mic_mute() -> Option<bool> {
-    if let Ok(output) = std::process::Command::new("wpctl")
-        .args(["get-volume", "@DEFAULT_AUDIO_SOURCE@"])
-        .output()
+async fn query_mic_mute() -> Option<bool> {
+    if let Ok(output) = run_output(
+        "wpctl",
+        &["get-volume", "@DEFAULT_AUDIO_SOURCE@"],
+        MIC_TIMEOUT,
+    )
+    .await
     {
         if output.status.success() {
             return Some(String::from_utf8_lossy(&output.stdout).contains("[MUTED]"));
         }
     }
-    if let Ok(output) = std::process::Command::new("pactl")
-        .args(["get-source-mute", "@DEFAULT_SOURCE@"])
-        .output()
+    if let Ok(output) = run_output(
+        "pactl",
+        &["get-source-mute", "@DEFAULT_SOURCE@"],
+        MIC_TIMEOUT,
+    )
+    .await
     {
         if output.status.success() {
             return Some(
@@ -119,17 +190,16 @@ fn query_mic_mute() -> Option<bool> {
     None
 }
 
-/// Stop Hex dictation synchronously, for process shutdown.
-pub fn stop_hex() {
-    if let Err(error) = hex_dictation("stop") {
+/// Stop Hex dictation during shutdown, with a bounded wait.
+pub async fn stop_hex() {
+    if let Err(error) = hex_dictation("stop").await {
         log::warn!("Could not stop Hex dictation: {error:#}");
     }
 }
 
-fn hex_dictation(action: &str) -> Result<()> {
-    let output = std::process::Command::new("hex")
-        .args(["dictation", action])
-        .output()
+async fn hex_dictation(action: &str) -> Result<()> {
+    let output = run_output("hex", &["dictation", action], HEX_TIMEOUT)
+        .await
         .context("run hex dictation")?;
     if !output.status.success() {
         let message = String::from_utf8_lossy(&output.stderr);
@@ -193,4 +263,36 @@ async fn player_proxy<'a>(connection: &zbus::Connection, name: &str) -> Result<z
     )
     .await
     .context("create an MPRIS player proxy")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CommandTimeout, run_output};
+    use std::time::{Duration, Instant};
+
+    #[tokio::test]
+    async fn a_hanging_command_is_cut_off() {
+        let started = Instant::now();
+        let error = run_output("sleep", &["5"], Duration::from_millis(100))
+            .await
+            .unwrap_err();
+        assert!(error.downcast_ref::<CommandTimeout>().is_some());
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[tokio::test]
+    async fn a_normal_command_returns_its_output() {
+        let output = run_output("printf", &["ok"], Duration::from_secs(1))
+            .await
+            .unwrap();
+        assert_eq!(output.stdout, b"ok");
+    }
+
+    #[tokio::test]
+    async fn a_missing_command_is_not_a_timeout() {
+        let error = run_output("pipeweaver-no-such-helper", &[], Duration::from_secs(1))
+            .await
+            .unwrap_err();
+        assert!(error.downcast_ref::<CommandTimeout>().is_none());
+    }
 }

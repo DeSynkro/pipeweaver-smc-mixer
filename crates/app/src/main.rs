@@ -382,7 +382,7 @@ async fn main() -> Result<()> {
     }
 
     if record_hex.load(Ordering::Relaxed) {
-        media::stop_hex();
+        media::stop_hex().await;
     }
     let _ = tray_handle.await;
     let _ = midi_handle.join();

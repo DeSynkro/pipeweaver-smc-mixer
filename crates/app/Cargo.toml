@@ -30,4 +30,4 @@ ulid = "1"
 zbus = { version = "5.19", default-features = false, features = ["async-io"] }
 log = "0.4"
 simplelog = "0.12"
-tokio = { version = "1.52.1", features = ["rt", "rt-multi-thread", "macros", "signal", "time", "sync"] }
+tokio = { version = "1.52.1", features = ["rt", "rt-multi-thread", "macros", "signal", "time", "sync", "process"] }
