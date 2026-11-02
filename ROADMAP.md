@@ -1,19 +1,14 @@
 # Roadmap
 
-Post-1.0 work. The 1.0 release covers the app, the AppImage/Docker builds and
-the initial documentation.
+Post-1.0 work. 1.0 covered the app, the AppImage/Docker builds and the
+initial documentation. 1.1 added endless knobs, the Hex toggle and the
+first batch of fixes.
 
-## Next patch
+## 1.1.1
 
 ### Fixes
 
-- Recover from Pipeweaver broadcast lag instead of stopping status updates.
-- Stop Hex dictation when hiding, quitting, changing MIDI mode or losing the mixer.
-- Keep discrete commands queued when one HTTP command times out.
-- Handle tray failure so the app cannot become hidden and unquittable.
-- Turn LEDs off when switching MIDI connection or device.
-- Reset soft takeover after on-screen R/link changes.
-- Make autostart honour “Start minimized”.
+- Make autostart honour "Start minimized".
 - Publish the actual MIDI link state instead of inferring it from port enumeration.
 - Decide and fix off-surface R semantics on linked sources.
 - Move blocking process calls off the Tokio runtime and add timeouts.

@@ -5,12 +5,12 @@ This is the maintainer checklist for cutting a release. The changelog is in
 
 ## Version
 
-The first release is `1.0.0`.
+The current version is in `VERSION`.
 
 Update these together when the version changes:
 
-- `Cargo.toml` — `version = "1.0.0"`
-- `VERSION` — `1.0.0`
+- `Cargo.toml` — `version = "<version>"`
+- `VERSION` — `<version>`
 - `README.md` — the version badge
 - `CHANGELOG.md` — add the new section
 
@@ -19,8 +19,8 @@ Update these together when the version changes:
 Create the tag manually after the release commit:
 
 ```sh
-git tag -a v1.0.0 -m "Pipeweaver SMC Mixer 1.0.0"
-git push codeberg v1.0.0
+git tag -a v<version> -m "Pipeweaver SMC Mixer <version>"
+git push codeberg v<version>
 ```
 
 ## Build
@@ -58,9 +58,9 @@ Collect the artifacts under versioned names:
 ```sh
 mkdir -p build/release
 cp build/docker/out/appimage/Pipeweaver-SMC-Mixer-x86_64.AppImage \
-   build/release/Pipeweaver-SMC-Mixer-1.0.0-x86_64.AppImage
+   build/release/Pipeweaver-SMC-Mixer-<version>-x86_64.AppImage
 cp build/appimage/Pipeweaver-SMC-Mixer-x86_64.AppImage \
-   build/release/Pipeweaver-SMC-Mixer-1.0.0-native-x86_64.AppImage
+   build/release/Pipeweaver-SMC-Mixer-<version>-native-x86_64.AppImage
 ```
 
 If you only ship one, use the Docker build and the versioned filename without
@@ -108,7 +108,7 @@ Create a release on Codeberg and attach:
 - `SHA256SUMS`;
 - the text from `CHANGELOG.md`.
 
-The release tag should match the git tag, for example `v1.0.0`.
+The release tag should match the git tag, for example `v<version>`.
 
 ## Bookkeeping
 
