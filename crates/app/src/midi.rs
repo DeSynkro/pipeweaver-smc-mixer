@@ -243,6 +243,8 @@ pub fn run_controls(
     ui_on: Arc<AtomicBool>,
     focus: Arc<AtomicBool>,
     record_hex: Arc<AtomicBool>,
+    hex_latch: Arc<AtomicBool>,
+    hex_active: Arc<AtomicBool>,
     minimized: Arc<AtomicBool>,
     egui: Arc<Mutex<Option<egui::Context>>>,
     midi_link: Arc<AtomicU8>,
@@ -273,19 +275,31 @@ pub fn run_controls(
         let callback_ui_on = ui_on.clone();
         let callback_focus = focus.clone();
         let callback_record_hex = record_hex.clone();
+        let callback_hex_latch = hex_latch.clone();
+        let callback_hex_active = hex_active.clone();
         let callback_minimized = minimized.clone();
         let callback_egui = egui.clone();
         let callback_last_midi = last_midi.clone();
         let mut axis_state = AxisState::default();
         let mut pickup_was = false;
         let mut pressed = [false; 128];
-        let mut hex_active = false;
+        let mut hex_mode_was = record_hex.load(Ordering::Relaxed);
+        let mut hex_latch_was = hex_latch.load(Ordering::Relaxed);
 
         let callback = move |message: &[u8]| {
             if message.len() < 3 || message[0] & 0xF0 != 0xB0 {
                 return;
             }
             callback_last_midi.store(now_millis(), Ordering::Relaxed);
+            let hex_mode = callback_record_hex.load(Ordering::Relaxed);
+            let hex_latch_now = callback_hex_latch.load(Ordering::Relaxed);
+            if hex_mode != hex_mode_was || hex_latch_now != hex_latch_was {
+                hex_mode_was = hex_mode;
+                hex_latch_was = hex_latch_now;
+                if callback_hex_active.swap(false, Ordering::Relaxed) {
+                    let _ = callback_media.send(MediaCommand::HexStop);
+                }
+            }
             let reset = callback_ui_reset.swap(0, Ordering::Relaxed);
             if reset != 0 {
                 for index in 0..8 {
@@ -335,7 +349,8 @@ pub fn run_controls(
                         &callback_ui_on,
                         &callback_focus,
                         &callback_record_hex,
-                        &mut hex_active,
+                        &callback_hex_latch,
+                        &callback_hex_active,
                         &callback_minimized,
                         &callback_egui,
                     );
@@ -426,6 +441,9 @@ pub fn run_controls(
                 let link = midi_link.load(Ordering::Relaxed);
                 if link != last_link {
                     last_link = link;
+                    if hex_active.swap(false, Ordering::Relaxed) {
+                        let _ = media.send(MediaCommand::HexStop);
+                    }
                     if let Some(output) = output.as_mut() {
                         blackout(output);
                     }
@@ -435,6 +453,9 @@ pub fn run_controls(
                 if latest.midi_mode != config.midi_mode || latest.midi_device != config.midi_device
                 {
                     config = latest;
+                    if hex_active.swap(false, Ordering::Relaxed) {
+                        let _ = media.send(MediaCommand::HexStop);
+                    }
                     if let Some(output) = output.as_mut() {
                         blackout(output);
                     }
@@ -460,14 +481,15 @@ fn handle_transport(
     ui_on: &Arc<AtomicBool>,
     focus: &Arc<AtomicBool>,
     record_hex: &Arc<AtomicBool>,
-    hex_active: &mut bool,
+    hex_latch: &Arc<AtomicBool>,
+    hex_active: &Arc<AtomicBool>,
     minimized: &Arc<AtomicBool>,
     egui: &Arc<Mutex<Option<egui::Context>>>,
 ) {
     let hex = record_hex.load(Ordering::Relaxed);
+    let latch = hex_latch.load(Ordering::Relaxed);
     if !down {
-        if control == 54 && *hex_active {
-            *hex_active = false;
+        if control == 54 && !latch && hex_active.swap(false, Ordering::Relaxed) {
             let _ = media.send(MediaCommand::HexStop);
         }
         return;
@@ -481,8 +503,17 @@ fn handle_transport(
         }
         54 => {
             if hex {
-                *hex_active = true;
-                let _ = media.send(MediaCommand::HexStart);
+                if latch {
+                    if hex_active.swap(false, Ordering::Relaxed) {
+                        let _ = media.send(MediaCommand::HexStop);
+                    } else {
+                        hex_active.store(true, Ordering::Relaxed);
+                        let _ = media.send(MediaCommand::HexStart);
+                    }
+                } else {
+                    hex_active.store(true, Ordering::Relaxed);
+                    let _ = media.send(MediaCommand::HexStart);
+                }
             } else {
                 let _ = media.send(MediaCommand::ToggleMicMute);
             }

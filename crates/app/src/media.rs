@@ -119,6 +119,13 @@ fn query_mic_mute() -> Option<bool> {
     None
 }
 
+/// Stop Hex dictation synchronously, for process shutdown.
+pub fn stop_hex() {
+    if let Err(error) = hex_dictation("stop") {
+        log::warn!("Could not stop Hex dictation: {error:#}");
+    }
+}
+
 fn hex_dictation(action: &str) -> Result<()> {
     let output = std::process::Command::new("hex")
         .args(["dictation", action])

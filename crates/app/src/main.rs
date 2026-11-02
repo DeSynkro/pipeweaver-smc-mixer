@@ -55,6 +55,8 @@ async fn main() -> Result<()> {
     let pickup = Arc::new(AtomicBool::new(initial.pickup));
     let knob_mode = Arc::new(knob_mode::KnobMode::default());
     let record_hex = Arc::new(AtomicBool::new(initial.record_hex));
+    let hex_latch = Arc::new(AtomicBool::new(initial.hex_latch));
+    let hex_active = Arc::new(AtomicBool::new(false));
 
     let tray_context = Arc::new(tray::TrayContext {
         ui_on: ui_on.clone(),
@@ -246,6 +248,8 @@ async fn main() -> Result<()> {
         let midi_ui_on = ui_on.clone();
         let midi_focus = focus.clone();
         let midi_record_hex = record_hex.clone();
+        let midi_hex_latch = hex_latch.clone();
+        let midi_hex_active = hex_active.clone();
         let midi_minimized = minimized.clone();
         let midi_egui = tray_context.egui.clone();
         let midi_link = midi_link.clone();
@@ -267,6 +271,8 @@ async fn main() -> Result<()> {
                 midi_ui_on,
                 midi_focus,
                 midi_record_hex,
+                midi_hex_latch,
+                midi_hex_active,
                 midi_minimized,
                 midi_egui,
                 midi_link,
@@ -300,6 +306,8 @@ async fn main() -> Result<()> {
             let ui_commands = ui_commands.clone();
             let media_tx = media_tx.clone();
             let record_hex = record_hex.clone();
+            let hex_latch = hex_latch.clone();
+            let hex_active = hex_active.clone();
             let midi_mode = midi_mode.clone();
             let mic_muted = mic_muted.clone();
             let minimized = minimized.clone();
@@ -334,6 +342,8 @@ async fn main() -> Result<()> {
                         ui_commands,
                         media_tx,
                         record_hex,
+                        hex_latch,
+                        hex_active,
                         mic_muted,
                         minimized,
                         last_midi,
@@ -348,6 +358,9 @@ async fn main() -> Result<()> {
         }
     }
 
+    if record_hex.load(Ordering::Relaxed) {
+        media::stop_hex();
+    }
     let _ = tray_handle.await;
     let _ = midi_handle.join();
     log::info!("Stopped {}", theme::APP_NAME);

@@ -81,6 +81,8 @@ pub struct Config {
     pub hide_off_surface: bool,
     #[serde(default = "default_record_hex")]
     pub record_hex: bool,
+    #[serde(default)]
+    pub hex_latch: bool,
     #[serde(default = "default_startup_animation")]
     pub startup_animation: bool,
     pub start_minimized: bool,
@@ -100,6 +102,7 @@ impl Default for Config {
             pickup: default_pickup(),
             hide_off_surface: false,
             record_hex: default_record_hex(),
+            hex_latch: false,
             startup_animation: default_startup_animation(),
             start_minimized: false,
             window_width: default_width(),
@@ -290,6 +293,11 @@ mod tests {
 
         let _ = fs::remove_file(&path);
         let _ = fs::remove_file(&backup);
+    }
+
+    #[test]
+    fn hex_latch_defaults_off() {
+        assert!(!Config::default().hex_latch);
     }
 
     #[test]

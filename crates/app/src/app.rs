@@ -109,6 +109,8 @@ pub struct SmcApp {
     reversed: HashSet<Ulid>,
     media_tx: tokio::sync::mpsc::UnboundedSender<MediaCommand>,
     record_hex: Arc<AtomicBool>,
+    hex_latch_net: Arc<AtomicBool>,
+    hex_active: Arc<AtomicBool>,
     mic_muted: Arc<AtomicBool>,
     minimized: Arc<AtomicBool>,
     minimize_at: Option<Instant>,
@@ -147,6 +149,8 @@ impl SmcApp {
         commands: Sender<DaemonRequest>,
         media_tx: tokio::sync::mpsc::UnboundedSender<MediaCommand>,
         record_hex: Arc<AtomicBool>,
+        hex_latch_net: Arc<AtomicBool>,
+        hex_active: Arc<AtomicBool>,
         mic_muted: Arc<AtomicBool>,
         minimized: Arc<AtomicBool>,
         last_midi: Arc<AtomicU64>,
@@ -182,6 +186,8 @@ impl SmcApp {
             reversed: HashSet::new(),
             media_tx,
             record_hex,
+            hex_latch_net,
+            hex_active,
             mic_muted,
             minimized,
             minimize_at: None,
@@ -207,6 +213,7 @@ impl SmcApp {
         self.config.midi_mode = MidiMode::from_code(self.midi_mode.load(Ordering::Relaxed));
         self.config.pickup = self.pickup_net.load(Ordering::Relaxed);
         self.config.record_hex = self.record_hex.load(Ordering::Relaxed);
+        self.config.hex_latch = self.hex_latch_net.load(Ordering::Relaxed);
         self.config.window_width = if self.maximized {
             self.restore_width
         } else {
@@ -973,13 +980,25 @@ impl SmcApp {
                 }
                 2 => {
                     if self.record_hex.load(Ordering::Relaxed) {
-                        let down = response.is_pointer_button_down_on();
-                        if down && !self.record_down {
-                            self.record_down = true;
-                            let _ = self.media_tx.send(MediaCommand::HexStart);
-                        } else if !down && self.record_down {
+                        if self.hex_latch_net.load(Ordering::Relaxed) {
+                            if response.clicked() {
+                                if self.hex_active.swap(false, Ordering::Relaxed) {
+                                    let _ = self.media_tx.send(MediaCommand::HexStop);
+                                } else {
+                                    self.hex_active.store(true, Ordering::Relaxed);
+                                    let _ = self.media_tx.send(MediaCommand::HexStart);
+                                }
+                            }
                             self.record_down = false;
-                            let _ = self.media_tx.send(MediaCommand::HexStop);
+                        } else {
+                            let down = response.is_pointer_button_down_on();
+                            if down && !self.record_down {
+                                self.record_down = true;
+                                let _ = self.media_tx.send(MediaCommand::HexStart);
+                            } else if !down && self.record_down {
+                                self.record_down = false;
+                                let _ = self.media_tx.send(MediaCommand::HexStop);
+                            }
                         }
                     } else {
                         if self.record_down {
@@ -1284,6 +1303,7 @@ impl SmcApp {
         let mut channel_colours = self.config.channel_colours;
         let mut hide_off_surface = self.config.hide_off_surface;
         let mut record_hex = self.record_hex.load(Ordering::Relaxed);
+        let mut hex_latch = self.hex_latch_net.load(Ordering::Relaxed);
         let mut start_minimized = self.config.start_minimized;
         let mut startup_animation = self.startup_animation.load(Ordering::Relaxed);
         let autostart_present = autostart_path().exists();
@@ -1622,7 +1642,7 @@ impl SmcApp {
                                 .color(palette.green),
                         );
                         ui.label(
-                            RichText::new(": hold the record button to dictate with Hex.")
+                            RichText::new(": the record button controls Hex dictation.")
                                 .size(label)
                                 .color(palette.dim),
                         );
@@ -1643,6 +1663,39 @@ impl SmcApp {
                             .color(palette.dim),
                         );
                     });
+                    if record_hex {
+                        columns[1].checkbox(&mut hex_latch, "Toggle Hex recording");
+                        columns[1].horizontal_wrapped(|ui| {
+                            ui.spacing_mut().item_spacing.x = 0.0;
+                            ui.label(
+                                RichText::new("On")
+                                    .size(label)
+                                    .strong()
+                                    .color(palette.green),
+                            );
+                            ui.label(
+                                RichText::new(
+                                    ": Press once to start dictating and again to stop.",
+                                )
+                                .size(label)
+                                .color(palette.dim),
+                            );
+                        });
+                        columns[1].horizontal_wrapped(|ui| {
+                            ui.spacing_mut().item_spacing.x = 0.0;
+                            ui.label(
+                                RichText::new("Off")
+                                    .size(label)
+                                    .strong()
+                                    .color(palette.red),
+                            );
+                            ui.label(
+                                RichText::new(": hold the record button while you speak.")
+                                    .size(label)
+                                    .color(palette.dim),
+                            );
+                        });
+                    }
                     let mic_muted = self.mic_muted.load(Ordering::Relaxed);
                     columns[1].label(
                         RichText::new(format!(
@@ -1889,8 +1942,18 @@ impl SmcApp {
         if record_hex != self.record_hex.load(Ordering::Relaxed) {
             self.record_hex.store(record_hex, Ordering::Relaxed);
             self.config.record_hex = record_hex;
-            if !record_hex && self.record_down {
+            if !record_hex {
                 self.record_down = false;
+                if self.hex_active.swap(false, Ordering::Relaxed) {
+                    let _ = self.media_tx.send(MediaCommand::HexStop);
+                }
+            }
+            self.save_config();
+        }
+        if hex_latch != self.hex_latch_net.load(Ordering::Relaxed) {
+            self.hex_latch_net.store(hex_latch, Ordering::Relaxed);
+            self.config.hex_latch = hex_latch;
+            if self.hex_active.swap(false, Ordering::Relaxed) {
                 let _ = self.media_tx.send(MediaCommand::HexStop);
             }
             self.save_config();
