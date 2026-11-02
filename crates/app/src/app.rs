@@ -343,6 +343,8 @@ impl SmcApp {
             } else {
                 (channel.mix_b, false)
             };
+            let fader_mix = mix_colour(fader_mix_b);
+            let knob_mix = mix_colour(knob_mix_b);
             let fader_base = if channel_colours {
                 channel_colour
             } else {
@@ -522,13 +524,18 @@ impl SmcApp {
                     ));
                 }
 
+                let hover_colour = if channel_colours {
+                    knob_mix
+                } else {
+                    palette.accent
+                };
                 let cap_fill = if knob_hovered {
-                    blend(palette.card, palette.accent, 0.25)
+                    blend(palette.card, hover_colour, 0.25)
                 } else {
                     palette.card
                 };
                 let cap_border = if knob_hovered {
-                    palette.accent
+                    hover_colour
                 } else {
                     palette.border
                 };
@@ -541,16 +548,35 @@ impl SmcApp {
                 let pointer_angle =
                     -135.0f32.to_radians() + 270.0f32.to_radians() * (knob as f32 / 100.0);
                 let tip = centre + vec2(pointer_angle.sin(), -pointer_angle.cos()) * (36.0 * scale);
-                painter.line_segment(
-                    [centre, tip],
-                    Stroke::new((3.0 * scale).max(1.5), knob_colour),
-                );
+                let pointer_stroke = (3.0 * scale).max(1.5);
+                if channel_colours && !knob_muted {
+                    // Subtle gradient from the mix colour at the centre to
+                    // the channel colour at the tip. Only partway toward the
+                    // mix at the centre so the tint stays understated.
+                    const STEPS: usize = 14;
+                    let start = knob_colour.lerp_to_gamma(knob_mix, 0.75);
+                    let mut previous = centre;
+                    for step in 1..=STEPS {
+                        let t = step as f32 / STEPS as f32;
+                        let point = centre + (tip - centre) * t;
+                        let colour = start.lerp_to_gamma(knob_colour, t);
+                        painter
+                            .line_segment([previous, point], Stroke::new(pointer_stroke, colour));
+                        previous = point;
+                    }
+                } else {
+                    painter.line_segment([centre, tip], Stroke::new(pointer_stroke, knob_colour));
+                }
                 painter.text(
                     centre + vec2(0.0, 92.0 * scale),
                     Align2::CENTER_CENTER,
                     format!("{knob}%"),
                     FontId::proportional((13.0 * scale).max(9.0)),
-                    palette.text,
+                    if channel_colours {
+                        knob_mix
+                    } else {
+                        palette.text
+                    },
                 );
             }
 
@@ -589,13 +615,18 @@ impl SmcApp {
                     .ctx()
                     .pointer_hover_pos()
                     .is_some_and(|pos| thumb.contains(pos));
+            let fader_hover_colour = if channel_colours {
+                fader_mix
+            } else {
+                palette.accent
+            };
             let thumb_fill = if fader_hovered {
-                blend(palette.card_hover, palette.accent, 0.25)
+                blend(palette.card_hover, fader_hover_colour, 0.25)
             } else {
                 palette.card_hover
             };
             let thumb_border = if fader_hovered {
-                palette.accent
+                fader_hover_colour
             } else {
                 palette.border
             };
@@ -608,13 +639,25 @@ impl SmcApp {
             );
             let value_text = format!("{fader}%");
             let value_font = FontId::proportional((14.0 * scale).max(9.0));
+            let value_colour = if channel_colours {
+                fader_mix
+            } else {
+                palette.text
+            };
             let value_width = painter
-                .layout_no_wrap(value_text.clone(), value_font.clone(), palette.text)
+                .layout_no_wrap(value_text.clone(), value_font.clone(), value_colour)
                 .size()
                 .x;
             let line_y = thumb.center().y;
             let line_gap = 4.0 * scale;
-            let line_stroke = Stroke::new((2.0 * scale).max(1.0), fader_colour);
+            let line_stroke = Stroke::new(
+                (2.0 * scale).max(1.0),
+                if channel_colours {
+                    fader_mix
+                } else {
+                    fader_colour
+                },
+            );
             let left_start = thumb.left() + 6.0 * scale;
             let left_end = thumb.center().x - value_width * 0.5 - line_gap;
             let right_start = thumb.center().x + value_width * 0.5 + line_gap;
@@ -636,7 +679,7 @@ impl SmcApp {
                 Align2::CENTER_CENTER,
                 value_text,
                 value_font,
-                palette.text,
+                value_colour,
             );
 
             let slots = if is_source { 4 } else { 3 };
