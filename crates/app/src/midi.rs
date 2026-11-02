@@ -405,9 +405,8 @@ pub fn run_controls(
                 return;
             }
             if knob_mode.request.load(Ordering::Relaxed) != REQUEST_NONE {
-                if let Some(output) = output.as_mut() {
-                    blackout(output);
-                }
+                // Internal config refresh: the device and its LED state are
+                // unchanged, so leave the surface lit across the reconnect.
                 break;
             }
             if animation_preview.swap(false, Ordering::Relaxed) {

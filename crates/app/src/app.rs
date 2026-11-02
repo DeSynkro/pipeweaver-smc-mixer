@@ -1264,7 +1264,7 @@ impl SmcApp {
                 FontId::proportional((15.0 * map.scale).max(8.0)),
                 if active { palette.accent } else { palette.text },
             );
-            if response.clicked() {
+            if response.clicked() && self.screen != screen {
                 self.screen = screen;
                 if screen == Screen::Config {
                     // Pick up a mode changed outside the app (vendor editor,
