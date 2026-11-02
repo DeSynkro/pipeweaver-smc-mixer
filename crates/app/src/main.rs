@@ -13,7 +13,7 @@ use eframe::egui;
 use pipeweaver_ipc::client::Client;
 use pipeweaver_ipc::clients::web::web_client::WebClient;
 use pipeweaver_smc_core::Engine;
-use pipeweaver_smc_core::config::{Config, state_dir};
+use pipeweaver_smc_core::config::{Config, autostart_path, set_autostart, state_dir};
 use pipeweaver_websocket_client::{BroadcastMessage, spawn_pipeweaver_handler};
 use simplelog::{
     ColorChoice, CombinedLogger, ConfigBuilder, LevelFilter, SharedLogger, TermLogger,
@@ -45,6 +45,11 @@ async fn main() -> Result<()> {
 
     let config_path = Config::path();
     let initial = Config::load(&config_path);
+    if autostart_path().exists()
+        && let Err(error) = set_autostart(true, initial.start_minimized)
+    {
+        log::warn!("Could not update autostart entry: {error:#}");
+    }
     let start_minimized = args.quiet || initial.start_minimized;
 
     let stop = Arc::new(AtomicBool::new(false));

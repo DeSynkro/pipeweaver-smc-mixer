@@ -1928,6 +1928,9 @@ impl SmcApp {
         if start_minimized != self.config.start_minimized {
             self.config.start_minimized = start_minimized;
             self.save_config();
+            if start_on_login && let Err(error) = set_autostart(true, start_minimized) {
+                log::warn!("Could not update autostart: {error:#}");
+            }
         }
         if startup_animation != self.startup_animation.load(Ordering::Relaxed) {
             self.startup_animation
@@ -1936,7 +1939,7 @@ impl SmcApp {
             self.save_config();
         }
         if start_on_login != autostart_present {
-            if let Err(error) = set_autostart(start_on_login) {
+            if let Err(error) = set_autostart(start_on_login, start_minimized) {
                 log::warn!("Could not update autostart: {error:#}");
             }
         }

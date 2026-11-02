@@ -193,7 +193,7 @@ fn autostart_executable(
         .unwrap_or_else(|| PathBuf::from(crate::identity::APP_ID))
 }
 
-pub fn set_autostart(enabled: bool) -> Result<()> {
+pub fn set_autostart(enabled: bool, start_minimized: bool) -> Result<()> {
     let path = autostart_path();
     if !enabled {
         match fs::remove_file(&path) {
@@ -209,21 +209,26 @@ pub fn set_autostart(enabled: bool) -> Result<()> {
         .to_string_lossy()
         .replace('\\', "\\\\")
         .replace('"', "\\\"");
-    let entry = format!(
+    fs::write(&path, autostart_entry(&exe, start_minimized))?;
+    Ok(())
+}
+
+fn autostart_entry(exe: &str, start_minimized: bool) -> String {
+    let quiet = if start_minimized { " --quiet" } else { "" };
+    format!(
         "[Desktop Entry]\n\
          Type=Application\n\
          Name={}\n\
          Comment=SMC-Mixer control surface for Pipeweaver\n\
-         Exec=env -u WAYLAND_DISPLAY \"{}\" --quiet\n\
+         Exec=env -u WAYLAND_DISPLAY \"{}\"{}\n\
          Icon={}\n\
          Terminal=false\n\
          X-GNOME-Autostart-enabled=true\n",
         crate::identity::APP_NAME,
         exe,
+        quiet,
         crate::identity::APP_ID,
-    );
-    fs::write(&path, entry)?;
-    Ok(())
+    )
 }
 
 pub fn state_dir() -> PathBuf {
@@ -243,7 +248,7 @@ pub fn runtime_dir() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::{
-        Config, SURFACE_SOURCES_DEFAULT, SURFACE_SOURCES_MAX, SURFACE_SOURCES_MIN,
+        Config, SURFACE_SOURCES_DEFAULT, SURFACE_SOURCES_MAX, SURFACE_SOURCES_MIN, autostart_entry,
         autostart_executable,
     };
     use std::ffi::OsString;
@@ -269,6 +274,22 @@ mod tests {
             Some(PathBuf::from("/tmp/.mount/usr/bin/pipeweaver-smc-mixer")),
         );
         assert_eq!(exe, PathBuf::from("/apps/Pipeweaver-SMC-Mixer.AppImage"));
+    }
+
+    #[test]
+    fn autostart_entry_includes_quiet_only_when_starting_minimized() {
+        let app = "/apps/Pipeweaver-SMC-Mixer.AppImage";
+        let hidden = autostart_entry(app, true);
+        assert!(hidden.contains(
+            "Exec=env -u WAYLAND_DISPLAY \"/apps/Pipeweaver-SMC-Mixer.AppImage\" --quiet\n"
+        ));
+
+        let visible = autostart_entry(app, false);
+        assert!(
+            visible
+                .contains("Exec=env -u WAYLAND_DISPLAY \"/apps/Pipeweaver-SMC-Mixer.AppImage\"\n")
+        );
+        assert!(!visible.contains("--quiet"));
     }
 
     #[test]
