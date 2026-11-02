@@ -83,6 +83,10 @@ pub struct Config {
     pub record_hex: bool,
     #[serde(default)]
     pub hex_latch: bool,
+    #[serde(default)]
+    pub linked_knob_disabled: bool,
+    #[serde(default)]
+    pub linked_reverse_disabled: bool,
     #[serde(default = "default_startup_animation")]
     pub startup_animation: bool,
     pub start_minimized: bool,
@@ -103,6 +107,8 @@ impl Default for Config {
             hide_off_surface: false,
             record_hex: default_record_hex(),
             hex_latch: false,
+            linked_knob_disabled: false,
+            linked_reverse_disabled: false,
             startup_animation: default_startup_animation(),
             start_minimized: false,
             window_width: default_width(),
@@ -319,6 +325,13 @@ mod tests {
     #[test]
     fn hex_latch_defaults_off() {
         assert!(!Config::default().hex_latch);
+    }
+
+    #[test]
+    fn linked_controls_stay_enabled_by_default() {
+        let config = Config::default();
+        assert!(!config.linked_knob_disabled);
+        assert!(!config.linked_reverse_disabled);
     }
 
     #[test]

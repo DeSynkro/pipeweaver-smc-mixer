@@ -62,6 +62,8 @@ async fn main() -> Result<()> {
     let record_hex = Arc::new(AtomicBool::new(initial.record_hex));
     let hex_latch = Arc::new(AtomicBool::new(initial.hex_latch));
     let hex_active = Arc::new(AtomicBool::new(false));
+    let linked_knob_disabled = Arc::new(AtomicBool::new(initial.linked_knob_disabled));
+    let linked_reverse_disabled = Arc::new(AtomicBool::new(initial.linked_reverse_disabled));
     let (media_tx, media_rx) = tokio::sync::mpsc::unbounded_channel();
 
     let tray_context = Arc::new(tray::TrayContext {
@@ -263,6 +265,8 @@ async fn main() -> Result<()> {
         let midi_record_hex = record_hex.clone();
         let midi_hex_latch = hex_latch.clone();
         let midi_hex_active = hex_active.clone();
+        let midi_linked_knob_disabled = linked_knob_disabled.clone();
+        let midi_linked_reverse_disabled = linked_reverse_disabled.clone();
         let midi_minimized = minimized.clone();
         let midi_egui = tray_context.egui.clone();
         let midi_link = midi_link.clone();
@@ -286,6 +290,8 @@ async fn main() -> Result<()> {
                 midi_record_hex,
                 midi_hex_latch,
                 midi_hex_active,
+                midi_linked_knob_disabled,
+                midi_linked_reverse_disabled,
                 midi_minimized,
                 midi_egui,
                 midi_link,
@@ -321,6 +327,8 @@ async fn main() -> Result<()> {
             let record_hex = record_hex.clone();
             let hex_latch = hex_latch.clone();
             let hex_active = hex_active.clone();
+            let linked_knob_disabled = linked_knob_disabled.clone();
+            let linked_reverse_disabled = linked_reverse_disabled.clone();
             let midi_mode = midi_mode.clone();
             let mic_muted = mic_muted.clone();
             let minimized = minimized.clone();
@@ -357,6 +365,8 @@ async fn main() -> Result<()> {
                         record_hex,
                         hex_latch,
                         hex_active,
+                        linked_knob_disabled,
+                        linked_reverse_disabled,
                         mic_muted,
                         minimized,
                         last_midi,

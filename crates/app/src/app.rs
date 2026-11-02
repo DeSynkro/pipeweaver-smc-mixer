@@ -111,6 +111,8 @@ pub struct SmcApp {
     record_hex: Arc<AtomicBool>,
     hex_latch_net: Arc<AtomicBool>,
     hex_active: Arc<AtomicBool>,
+    linked_knob_disabled_net: Arc<AtomicBool>,
+    linked_reverse_disabled_net: Arc<AtomicBool>,
     mic_muted: Arc<AtomicBool>,
     minimized: Arc<AtomicBool>,
     minimize_at: Option<Instant>,
@@ -151,6 +153,8 @@ impl SmcApp {
         record_hex: Arc<AtomicBool>,
         hex_latch_net: Arc<AtomicBool>,
         hex_active: Arc<AtomicBool>,
+        linked_knob_disabled_net: Arc<AtomicBool>,
+        linked_reverse_disabled_net: Arc<AtomicBool>,
         mic_muted: Arc<AtomicBool>,
         minimized: Arc<AtomicBool>,
         last_midi: Arc<AtomicU64>,
@@ -188,6 +192,8 @@ impl SmcApp {
             record_hex,
             hex_latch_net,
             hex_active,
+            linked_knob_disabled_net,
+            linked_reverse_disabled_net,
             mic_muted,
             minimized,
             minimize_at: None,
@@ -214,6 +220,7 @@ impl SmcApp {
         self.config.pickup = self.pickup_net.load(Ordering::Relaxed);
         self.config.record_hex = self.record_hex.load(Ordering::Relaxed);
         self.config.hex_latch = self.hex_latch_net.load(Ordering::Relaxed);
+        self.config.linked_knob_disabled = self.linked_knob_disabled_net.load(Ordering::Relaxed);
         self.config.window_width = if self.maximized {
             self.restore_width
         } else {
@@ -803,8 +810,10 @@ impl SmcApp {
                                 Some(DaemonRequest::Pipewire(command))
                             }
                             2 => {
-                                self.swap.fetch_xor(1 << index, Ordering::Relaxed);
-                                self.ui_reset.fetch_or(1 << index, Ordering::Relaxed);
+                                if !(channel.linked && self.config.linked_reverse_disabled) {
+                                    self.swap.fetch_xor(1 << index, Ordering::Relaxed);
+                                    self.ui_reset.fetch_or(1 << index, Ordering::Relaxed);
+                                }
                                 None
                             }
                             _ => {
@@ -1304,6 +1313,8 @@ impl SmcApp {
         let mut hide_off_surface = self.config.hide_off_surface;
         let mut record_hex = self.record_hex.load(Ordering::Relaxed);
         let mut hex_latch = self.hex_latch_net.load(Ordering::Relaxed);
+        let mut linked_knob_disabled = self.linked_knob_disabled_net.load(Ordering::Relaxed);
+        let mut linked_reverse_disabled = self.linked_reverse_disabled_net.load(Ordering::Relaxed);
         let mut start_minimized = self.config.start_minimized;
         let mut startup_animation = self.startup_animation.load(Ordering::Relaxed);
         let autostart_present = autostart_path().exists();
@@ -1693,6 +1704,69 @@ impl SmcApp {
                     } else if let Some(note) = knob_detail.note.as_deref() {
                         columns[1].label(RichText::new(note).size(label).color(palette.amber));
                     }
+                    columns[1].checkbox(&mut linked_knob_disabled, "Disable knobs while linked");
+                    columns[1].horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing.x = 0.0;
+                        ui.label(
+                            RichText::new("On")
+                                .size(label)
+                                .strong()
+                                .color(palette.green),
+                        );
+                        ui.label(
+                            RichText::new(
+                                ": the knobs are disabled until the source is unlinked.",
+                            )
+                            .size(label)
+                            .color(palette.dim),
+                        );
+                    });
+                    columns[1].horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing.x = 0.0;
+                        ui.label(
+                            RichText::new("Off")
+                                .size(label)
+                                .strong()
+                                .color(palette.red),
+                        );
+                        ui.label(
+                            RichText::new(": the knobs remain active.")
+                                .size(label)
+                                .color(palette.dim),
+                        );
+                    });
+                    columns[1].checkbox(
+                        &mut linked_reverse_disabled,
+                        "Disable reverse function (R Button) while linked",
+                    );
+                    columns[1].horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing.x = 0.0;
+                        ui.label(
+                            RichText::new("On")
+                                .size(label)
+                                .strong()
+                                .color(palette.green),
+                        );
+                        ui.label(
+                            RichText::new(": R is disabled while the sources are linked.")
+                                .size(label)
+                                .color(palette.dim),
+                        );
+                    });
+                    columns[1].horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing.x = 0.0;
+                        ui.label(
+                            RichText::new("Off")
+                                .size(label)
+                                .strong()
+                                .color(palette.red),
+                        );
+                        ui.label(
+                            RichText::new(": R button retains its function.")
+                                .size(label)
+                                .color(palette.dim),
+                        );
+                    });
                     columns[1].horizontal(|ui| {
                         ui.checkbox(&mut record_hex, "Record button switches to");
                         ui.hyperlink_to("Hex", "https://github.com/anomalyco/hex");
@@ -1960,6 +2034,18 @@ impl SmcApp {
             if self.hex_active.swap(false, Ordering::Relaxed) {
                 let _ = self.media_tx.send(MediaCommand::HexStop);
             }
+            self.save_config();
+        }
+        if linked_knob_disabled != self.linked_knob_disabled_net.load(Ordering::Relaxed) {
+            self.linked_knob_disabled_net
+                .store(linked_knob_disabled, Ordering::Relaxed);
+            self.config.linked_knob_disabled = linked_knob_disabled;
+            self.save_config();
+        }
+        if linked_reverse_disabled != self.linked_reverse_disabled_net.load(Ordering::Relaxed) {
+            self.linked_reverse_disabled_net
+                .store(linked_reverse_disabled, Ordering::Relaxed);
+            self.config.linked_reverse_disabled = linked_reverse_disabled;
             self.save_config();
         }
         if reset {
@@ -2365,6 +2451,7 @@ impl SmcApp {
                                         commands,
                                         engine.meter(channel.id),
                                         reversed,
+                                        self.config.linked_reverse_disabled,
                                     );
                                 }
                             });
@@ -2567,6 +2654,7 @@ fn draw_card(
     commands: &Sender<DaemonRequest>,
     meter: u8,
     reversed: &mut HashSet<Ulid>,
+    disable_reverse_linked: bool,
 ) {
     let (rect, _) = ui.allocate_exact_size(vec2(180.0, 320.0), Sense::hover());
     let painter = ui.painter().clone();
@@ -2664,7 +2752,8 @@ fn draw_card(
             )));
         }
         let is_reversed = reversed.contains(&channel.id);
-        if card_button(
+        let reverse_disabled = channel.linked && disable_reverse_linked;
+        if card_button_enabled(
             ui,
             &painter,
             reverse,
@@ -2673,6 +2762,7 @@ fn draw_card(
             palette.accent,
             palette,
             Id::unique(("card-reverse", channel.id)),
+            !reverse_disabled,
         ) {
             if is_reversed {
                 reversed.remove(&channel.id);
@@ -2991,8 +3081,42 @@ fn card_button(
     palette: &theme::Palette,
     id: Id,
 ) -> bool {
-    let response = ui.interact(rect, id, Sense::click());
-    let fill = if active {
+    card_button_enabled(
+        ui,
+        painter,
+        rect,
+        label,
+        active,
+        active_colour,
+        palette,
+        id,
+        true,
+    )
+}
+
+fn card_button_enabled(
+    ui: &mut egui::Ui,
+    painter: &egui::Painter,
+    rect: Rect,
+    label: &str,
+    active: bool,
+    active_colour: Color32,
+    palette: &theme::Palette,
+    id: Id,
+    enabled: bool,
+) -> bool {
+    let response = ui.interact(
+        rect,
+        id,
+        if enabled {
+            Sense::click()
+        } else {
+            Sense::hover()
+        },
+    );
+    let fill = if !enabled {
+        palette.card
+    } else if active {
         active_colour.gamma_multiply(0.3)
     } else {
         palette.card_hover
@@ -3003,7 +3127,9 @@ fn card_button(
         egui::CornerRadius::same(5),
         Stroke::new(
             1.0,
-            if active {
+            if !enabled {
+                palette.border
+            } else if active {
                 active_colour
             } else {
                 palette.border
@@ -3016,9 +3142,15 @@ fn card_button(
         Align2::CENTER_CENTER,
         label,
         FontId::proportional(9.0),
-        if active { active_colour } else { palette.text },
+        if !enabled {
+            palette.dim
+        } else if active {
+            active_colour
+        } else {
+            palette.text
+        },
     );
-    response.clicked()
+    enabled && response.clicked()
 }
 
 fn link_button(

@@ -245,6 +245,8 @@ pub fn run_controls(
     record_hex: Arc<AtomicBool>,
     hex_latch: Arc<AtomicBool>,
     hex_active: Arc<AtomicBool>,
+    linked_knob_disabled: Arc<AtomicBool>,
+    linked_reverse_disabled: Arc<AtomicBool>,
     minimized: Arc<AtomicBool>,
     egui: Arc<Mutex<Option<egui::Context>>>,
     midi_link: Arc<AtomicU8>,
@@ -277,6 +279,8 @@ pub fn run_controls(
         let callback_record_hex = record_hex.clone();
         let callback_hex_latch = hex_latch.clone();
         let callback_hex_active = hex_active.clone();
+        let callback_linked_knob_disabled = linked_knob_disabled.clone();
+        let callback_linked_reverse_disabled = linked_reverse_disabled.clone();
         let callback_minimized = minimized.clone();
         let callback_egui = egui.clone();
         let callback_last_midi = last_midi.clone();
@@ -319,6 +323,7 @@ pub fn run_controls(
             let relative = callback_knob_mode.mode.load(Ordering::Relaxed) == MODE_RELATIVE;
             let up = callback_knob_mode.up.load(Ordering::Relaxed);
             let down = callback_knob_mode.down.load(Ordering::Relaxed);
+            let linked_knob_disabled = callback_linked_knob_disabled.load(Ordering::Relaxed);
 
             match control {
                 30..=47 => handle_axis(
@@ -333,6 +338,7 @@ pub fn run_controls(
                         relative,
                         up,
                         down,
+                        linked_knob_disabled,
                     },
                 ),
                 52..=62 => {
@@ -368,6 +374,7 @@ pub fn run_controls(
                             &callback_commands,
                             &callback_swap,
                             &mut axis_state,
+                            callback_linked_reverse_disabled.load(Ordering::Relaxed),
                         );
                     }
                 }
@@ -726,6 +733,7 @@ struct AxisModes {
     relative: bool,
     up: u8,
     down: u8,
+    linked_knob_disabled: bool,
 }
 
 fn now_millis() -> u64 {
@@ -763,7 +771,7 @@ fn handle_axis(
 
     let (target_percent, mix) = match channel.kind {
         ChannelKind::Source => {
-            if is_knob && channel.linked {
+            if is_knob && channel.linked && modes.linked_knob_disabled {
                 return;
             }
             let swapped = swap.load(Ordering::Relaxed) & (1 << index) != 0;
@@ -818,6 +826,7 @@ fn handle_button(
     commands: &Sender<DaemonRequest>,
     swap: &AtomicU8,
     state: &mut AxisState,
+    linked_reverse_disabled: bool,
 ) {
     let index = match control {
         64..=71 => (control - 64) as usize,
@@ -836,6 +845,9 @@ fn handle_button(
     }
 
     if control / 8 == 10 && channel.kind == ChannelKind::Source {
+        if channel.linked && linked_reverse_disabled {
+            return;
+        }
         swap.fetch_xor(1 << index, Ordering::Relaxed);
         state.pickup.reset_strip(index);
         state.knobs.reset(index);
