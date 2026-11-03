@@ -180,9 +180,10 @@ async fn main() -> Result<()> {
     let (command_tx, mut command_rx) = tokio::sync::mpsc::channel(1024);
     {
         let (broadcast_tx, mut broadcast_rx) = tokio::sync::broadcast::channel(64);
-        let (handler_tx, handler_rx) = tokio::sync::mpsc::channel(1);
+        // The handler still takes a command receiver, but commands now go
+        // over HTTP. Dropping the sender leaves the channel inert.
+        let (_, handler_rx) = tokio::sync::mpsc::channel(1);
         let stop_handler = spawn_pipeweaver_handler(handler_rx, broadcast_tx).await;
-        drop(handler_tx);
 
         // Commands go over the daemon's HTTP API with a timeout. Keeping them
         // off the websocket means a stalled command send can never block the

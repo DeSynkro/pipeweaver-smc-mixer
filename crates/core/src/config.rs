@@ -141,6 +141,13 @@ impl Config {
                 Self::default()
             }
         };
+        if config.schema > default_schema() {
+            log::warn!(
+                "Config schema {} is newer than this build ({}); unknown fields are ignored",
+                config.schema,
+                default_schema()
+            );
+        }
         config.surface_sources = config
             .surface_sources
             .clamp(SURFACE_SOURCES_MIN, SURFACE_SOURCES_MAX);
@@ -183,7 +190,7 @@ pub fn config_home() -> PathBuf {
 pub fn autostart_path() -> PathBuf {
     config_home()
         .join("autostart")
-        .join(format!("{}.desktop", crate::identity::APP_ID))
+        .join(crate::identity::AUTOSTART_FILE)
 }
 
 fn autostart_executable(

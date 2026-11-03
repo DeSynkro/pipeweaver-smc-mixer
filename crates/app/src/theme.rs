@@ -1,8 +1,6 @@
 use egui::{Color32, CornerRadius, Rect, Stroke, Vec2, pos2, vec2};
 
-pub const APP_NAME: &str = "Pipeweaver SMC Mixer";
-pub const APP_ID: &str = "pipeweaver-smc-mixer";
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+pub use pipeweaver_smc_core::{APP_ID, APP_NAME, APP_VERSION as VERSION};
 
 pub const SHELL_W: f32 = 1987.0;
 pub const SHELL_H: f32 = 967.0;
