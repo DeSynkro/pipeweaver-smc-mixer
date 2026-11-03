@@ -231,6 +231,7 @@ fn open_output(config: &Config) -> Option<MidiOutputConnection> {
     None
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn run_controls(
     config: Config,
     engine: Arc<Engine>,
@@ -481,6 +482,7 @@ fn blackout(output: &mut MidiOutputConnection) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_transport(
     control: u8,
     down: bool,
@@ -1019,8 +1021,10 @@ mod tests {
 
     #[test]
     fn leds_go_dark_when_pipeweaver_disconnects() {
-        let mut snapshot = Snapshot::default();
-        snapshot.connected = true;
+        let mut snapshot = Snapshot {
+            connected: true,
+            ..Default::default()
+        };
         snapshot.channels[0].assigned = true;
         snapshot.channels[0].mute_a = true;
         snapshot.channels[0].linked = false;

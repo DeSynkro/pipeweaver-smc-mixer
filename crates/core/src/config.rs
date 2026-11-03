@@ -345,8 +345,10 @@ mod tests {
     fn concurrent_saves_leave_a_readable_config() {
         let path = temp_config_path("concurrent");
         let first = Config::default();
-        let mut second = Config::default();
-        second.surface_sources = SURFACE_SOURCES_MAX;
+        let second = Config {
+            surface_sources: SURFACE_SOURCES_MAX,
+            ..Default::default()
+        };
 
         let first_path = path.clone();
         let second_path = path.clone();

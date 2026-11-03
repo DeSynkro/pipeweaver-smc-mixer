@@ -168,17 +168,17 @@ fn build(status: &DaemonStatus, source_slots: usize) -> Snapshot {
 
     let mut off_surface = Vec::new();
     for id in &sources {
-        if !assigned.contains(id) {
-            if let Some(channel) = source_channel(status, *id) {
-                off_surface.push(channel);
-            }
+        if !assigned.contains(id)
+            && let Some(channel) = source_channel(status, *id)
+        {
+            off_surface.push(channel);
         }
     }
     for id in &targets {
-        if !assigned.contains(id) {
-            if let Some(channel) = target_channel(status, *id) {
-                off_surface.push(channel);
-            }
+        if !assigned.contains(id)
+            && let Some(channel) = target_channel(status, *id)
+        {
+            off_surface.push(channel);
         }
     }
 

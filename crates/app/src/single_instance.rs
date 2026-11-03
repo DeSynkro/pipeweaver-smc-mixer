@@ -14,6 +14,7 @@ impl InstanceLock {
         let path = dir.join("pipeweaver-smc-mixer.lock");
         let file = OpenOptions::new()
             .create(true)
+            .truncate(false)
             .read(true)
             .write(true)
             .open(&path)

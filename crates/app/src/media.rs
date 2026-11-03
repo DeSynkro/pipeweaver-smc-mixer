@@ -167,10 +167,9 @@ async fn query_mic_mute() -> Option<bool> {
         MIC_TIMEOUT,
     )
     .await
+        && output.status.success()
     {
-        if output.status.success() {
-            return Some(String::from_utf8_lossy(&output.stdout).contains("[MUTED]"));
-        }
+        return Some(String::from_utf8_lossy(&output.stdout).contains("[MUTED]"));
     }
     if let Ok(output) = run_output(
         "pactl",
@@ -178,14 +177,13 @@ async fn query_mic_mute() -> Option<bool> {
         MIC_TIMEOUT,
     )
     .await
+        && output.status.success()
     {
-        if output.status.success() {
-            return Some(
-                String::from_utf8_lossy(&output.stdout)
-                    .to_ascii_lowercase()
-                    .contains("yes"),
-            );
-        }
+        return Some(
+            String::from_utf8_lossy(&output.stdout)
+                .to_ascii_lowercase()
+                .contains("yes"),
+        );
     }
     None
 }
@@ -229,11 +227,11 @@ async fn send_media(command: MediaCommand) -> Result<()> {
         let Ok(proxy) = player_proxy(&connection, name).await else {
             continue;
         };
-        if let Ok(status) = proxy.get_property::<String>("PlaybackStatus").await {
-            if status == "Playing" {
-                chosen = Some(name.clone());
-                break;
-            }
+        if let Ok(status) = proxy.get_property::<String>("PlaybackStatus").await
+            && status == "Playing"
+        {
+            chosen = Some(name.clone());
+            break;
         }
     }
     let name = chosen.unwrap_or_else(|| players.remove(0));

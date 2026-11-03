@@ -187,7 +187,7 @@ impl Tray for TrayIcon {
                     .resize_exact(128, 128, image::imageops::FilterType::Lanczos3);
             let (width, height) = image.dimensions();
             let mut data = image.into_rgba8().into_vec();
-            for pixel in data.chunks_exact_mut(4) {
+            for pixel in data.as_chunks_mut::<4>().0 {
                 pixel.rotate_right(1);
             }
             Icon {

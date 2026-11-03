@@ -134,6 +134,7 @@ pub struct SmcApp {
 }
 
 impl SmcApp {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         config: Config,
         config_path: PathBuf,
@@ -411,34 +412,34 @@ impl SmcApp {
                 } else {
                     let response = ui.interact(knob_rect, knob_id, Sense::click_and_drag());
                     knob_hovered = response.hovered();
-                    if response.drag_started() {
-                        if let Some(pos) = response.interact_pointer_pos() {
-                            ui.ctx()
-                                .data_mut(|data| data.insert_temp(knob_id, (knob, pos.y, knob)));
-                        }
+                    if response.drag_started()
+                        && let Some(pos) = response.interact_pointer_pos()
+                    {
+                        ui.ctx()
+                            .data_mut(|data| data.insert_temp(knob_id, (knob, pos.y, knob)));
                     }
-                    if response.dragged() {
-                        if let (Some((start_value, start_y, last)), Some(pos)) = (
+                    if response.dragged()
+                        && let (Some((start_value, start_y, last)), Some(pos)) = (
                             ui.ctx()
                                 .data(|data| data.get_temp::<(u8, f32, u8)>(knob_id)),
                             response.interact_pointer_pos(),
-                        ) {
-                            let delta = (start_y - pos.y) / (150.0 * scale) * 100.0;
-                            let next = (start_value as f32 + delta).clamp(0.0, 100.0).round() as u8;
-                            if next != last {
-                                ui.ctx().data_mut(|data| {
-                                    data.insert_temp(knob_id, (start_value, start_y, next))
-                                });
-                                let _ = self.commands.try_send(DaemonRequest::Pipewire(
-                                    APICommand::SetSourceVolume(
-                                        channel.id,
-                                        if is_swapped { Mix::A } else { Mix::B },
-                                        next,
-                                    ),
-                                ));
-                            }
-                            knob = next;
+                        )
+                    {
+                        let delta = (start_y - pos.y) / (150.0 * scale) * 100.0;
+                        let next = (start_value as f32 + delta).clamp(0.0, 100.0).round() as u8;
+                        if next != last {
+                            ui.ctx().data_mut(|data| {
+                                data.insert_temp(knob_id, (start_value, start_y, next))
+                            });
+                            let _ = self.commands.try_send(DaemonRequest::Pipewire(
+                                APICommand::SetSourceVolume(
+                                    channel.id,
+                                    if is_swapped { Mix::A } else { Mix::B },
+                                    next,
+                                ),
+                            ));
                         }
+                        knob = next;
                     }
                     let knob_label = if is_swapped { &labels[0] } else { &labels[1] };
                     response.on_hover_text(format!("Drag to set the {knob_label} level"));
@@ -450,34 +451,32 @@ impl SmcApp {
                 if response.drag_started() {
                     ui.ctx().data_mut(|data| data.insert_temp(fader_id, fader));
                 }
-                if response.dragged() || response.clicked() {
-                    if let Some(pos) = response.interact_pointer_pos() {
-                        let track_top = map.point(base + 43.5, 350.0).y;
-                        let track_bottom = map.point(base + 43.5, 801.0).y;
-                        let fraction =
-                            ((track_bottom - pos.y) / (track_bottom - track_top)).clamp(0.0, 1.0);
-                        let next = (fraction * 100.0).round() as u8;
-                        let last = ui
-                            .ctx()
-                            .data(|data| data.get_temp::<u8>(fader_id))
-                            .unwrap_or(fader);
-                        if next != last {
-                            ui.ctx().data_mut(|data| data.insert_temp(fader_id, next));
-                            let command = if is_source {
-                                DaemonRequest::Pipewire(APICommand::SetSourceVolume(
-                                    channel.id,
-                                    if is_swapped { Mix::B } else { Mix::A },
-                                    next,
-                                ))
-                            } else {
-                                DaemonRequest::Pipewire(APICommand::SetTargetVolume(
-                                    channel.id, next,
-                                ))
-                            };
-                            let _ = self.commands.try_send(command);
-                        }
-                        fader = next;
+                if (response.dragged() || response.clicked())
+                    && let Some(pos) = response.interact_pointer_pos()
+                {
+                    let track_top = map.point(base + 43.5, 350.0).y;
+                    let track_bottom = map.point(base + 43.5, 801.0).y;
+                    let fraction =
+                        ((track_bottom - pos.y) / (track_bottom - track_top)).clamp(0.0, 1.0);
+                    let next = (fraction * 100.0).round() as u8;
+                    let last = ui
+                        .ctx()
+                        .data(|data| data.get_temp::<u8>(fader_id))
+                        .unwrap_or(fader);
+                    if next != last {
+                        ui.ctx().data_mut(|data| data.insert_temp(fader_id, next));
+                        let command = if is_source {
+                            DaemonRequest::Pipewire(APICommand::SetSourceVolume(
+                                channel.id,
+                                if is_swapped { Mix::B } else { Mix::A },
+                                next,
+                            ))
+                        } else {
+                            DaemonRequest::Pipewire(APICommand::SetTargetVolume(channel.id, next))
+                        };
+                        let _ = self.commands.try_send(command);
                     }
+                    fader = next;
                 }
                 let fader_label = if is_source {
                     if is_swapped { &labels[1] } else { &labels[0] }
@@ -2012,10 +2011,10 @@ impl SmcApp {
             self.config.startup_animation = startup_animation;
             self.save_config();
         }
-        if start_on_login != autostart_present {
-            if let Err(error) = set_autostart(start_on_login, start_minimized) {
-                log::warn!("Could not update autostart: {error:#}");
-            }
+        if start_on_login != autostart_present
+            && let Err(error) = set_autostart(start_on_login, start_minimized)
+        {
+            log::warn!("Could not update autostart: {error:#}");
         }
         if record_hex != self.record_hex.load(Ordering::Relaxed) {
             self.record_hex.store(record_hex, Ordering::Relaxed);
@@ -2558,13 +2557,12 @@ impl eframe::App for SmcApp {
             self.offline_t = offline_target;
         }
         self.midi = Link::from_code(self.midi_net.load(Ordering::Relaxed));
-        if let Some(at) = self.minimize_at {
-            if Instant::now() >= at + Duration::from_millis(400)
-                && ctx.input(|input| input.viewport().minimized) == Some(false)
-            {
-                self.minimized.store(false, Ordering::Relaxed);
-                self.minimize_at = None;
-            }
+        if let Some(at) = self.minimize_at
+            && Instant::now() >= at + Duration::from_millis(400)
+            && ctx.input(|input| input.viewport().minimized) == Some(false)
+        {
+            self.minimized.store(false, Ordering::Relaxed);
+            self.minimize_at = None;
         }
         let engine_slots = self.engine.source_slots();
         if engine_slots != self.config.surface_sources {
@@ -2574,30 +2572,30 @@ impl eframe::App for SmcApp {
 
         // The window is created locked so tiling managers keep it floating.
         // Once it has been mapped, allow programmatic resizing again.
-        if let Some(at) = self.enable_resize_at {
-            if Instant::now() >= at {
-                ctx.send_viewport_cmd(ViewportCommand::MinInnerSize(vec2(
-                    theme::MIN_WINDOW_WIDTH,
-                    theme::MIN_WINDOW_WIDTH / theme::ASPECT,
-                )));
-                ctx.send_viewport_cmd(ViewportCommand::MaxInnerSize(vec2(
-                    f32::INFINITY,
-                    f32::INFINITY,
-                )));
-                ctx.send_viewport_cmd(ViewportCommand::Resizable(true));
-                ctx.send_viewport_cmd(ViewportCommand::InnerSize(vec2(
-                    self.window_width,
-                    self.window_width / theme::ASPECT,
-                )));
-                self.enable_resize_at = None;
-            }
+        if let Some(at) = self.enable_resize_at
+            && Instant::now() >= at
+        {
+            ctx.send_viewport_cmd(ViewportCommand::MinInnerSize(vec2(
+                theme::MIN_WINDOW_WIDTH,
+                theme::MIN_WINDOW_WIDTH / theme::ASPECT,
+            )));
+            ctx.send_viewport_cmd(ViewportCommand::MaxInnerSize(vec2(
+                f32::INFINITY,
+                f32::INFINITY,
+            )));
+            ctx.send_viewport_cmd(ViewportCommand::Resizable(true));
+            ctx.send_viewport_cmd(ViewportCommand::InnerSize(vec2(
+                self.window_width,
+                self.window_width / theme::ASPECT,
+            )));
+            self.enable_resize_at = None;
         }
 
-        if let Some(at) = self.focus_at {
-            if Instant::now() >= at {
-                ctx.send_viewport_cmd(ViewportCommand::Focus);
-                self.focus_at = None;
-            }
+        if let Some(at) = self.focus_at
+            && Instant::now() >= at
+        {
+            ctx.send_viewport_cmd(ViewportCommand::Focus);
+            self.focus_at = None;
         }
         if self.focus.swap(false, Ordering::Relaxed) {
             ctx.send_viewport_cmd(ViewportCommand::Focus);
@@ -2619,11 +2617,11 @@ impl eframe::App for SmcApp {
             if !self.resizing {
                 self.window_width = rect.width();
             }
-            if let Some((pos, width, deadline)) = self.pending_move {
-                if (rect.width() - width).abs() <= 1.0 || Instant::now() >= deadline {
-                    ctx.send_viewport_cmd(ViewportCommand::OuterPosition(pos));
-                    self.pending_move = None;
-                }
+            if let Some((pos, width, deadline)) = self.pending_move
+                && ((rect.width() - width).abs() <= 1.0 || Instant::now() >= deadline)
+            {
+                ctx.send_viewport_cmd(ViewportCommand::OuterPosition(pos));
+                self.pending_move = None;
             }
         }
         ctx.request_repaint_after(Duration::from_millis(50));
@@ -2919,6 +2917,7 @@ fn draw_card(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_card_slider(
     ui: &mut egui::Ui,
     painter: &egui::Painter,
@@ -2948,20 +2947,20 @@ fn draw_card_slider(
         Id::unique(("off-slider", channel.id, column)),
         Sense::click_and_drag(),
     );
-    if response.dragged() || response.clicked() {
-        if let Some(pos) = ui.ctx().input(|input| input.pointer.interact_pos()) {
-            let next = (((bottom - pos.y) / (bottom - top)) * 100.0)
-                .clamp(0.0, 100.0)
-                .round() as u8;
-            if next != value {
-                value = next;
-                let request = if target {
-                    DaemonRequest::Pipewire(APICommand::SetTargetVolume(channel.id, next))
-                } else {
-                    DaemonRequest::Pipewire(APICommand::SetSourceVolume(channel.id, mix, next))
-                };
-                let _ = commands.try_send(request);
-            }
+    if (response.dragged() || response.clicked())
+        && let Some(pos) = ui.ctx().input(|input| input.pointer.interact_pos())
+    {
+        let next = (((bottom - pos.y) / (bottom - top)) * 100.0)
+            .clamp(0.0, 100.0)
+            .round() as u8;
+        if next != value {
+            value = next;
+            let request = if target {
+                DaemonRequest::Pipewire(APICommand::SetTargetVolume(channel.id, next))
+            } else {
+                DaemonRequest::Pipewire(APICommand::SetSourceVolume(channel.id, mix, next))
+            };
+            let _ = commands.try_send(request);
         }
     }
 
@@ -3071,6 +3070,7 @@ fn config_button(
     response.clicked()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn card_button(
     ui: &mut egui::Ui,
     painter: &egui::Painter,
@@ -3094,6 +3094,7 @@ fn card_button(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn card_button_enabled(
     ui: &mut egui::Ui,
     painter: &egui::Painter,
