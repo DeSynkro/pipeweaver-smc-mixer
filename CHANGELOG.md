@@ -1,5 +1,45 @@
 # Changelog
 
+## 1.1.1 - 2026-11-03
+
+### Added
+
+- Optional linked-source restrictions in Config: "Disable knobs while linked"
+  and "Disable reverse function (R Button) while linked". Both are off by
+  default, so linked sources keep the Audience knob and R active and can still
+  change the A/B ratio or swap the mixes.
+
+### Changed
+
+- Config repaints at 20 FPS instead of 60, and minimized windows drop to
+  1 FPS until they are restored.
+- The `image` dependency now builds PNG support only, dropping unused codecs
+  and a large part of the dependency tree.
+- Removed duplicated identity constants, unused identity/config items and the
+  dead websocket command channel.
+- Cleared the remaining clippy warnings; the workspace now builds clean with
+  `-D warnings`.
+
+### Fixed
+
+- Autostart now follows "Start minimized" instead of always passing `--quiet`.
+  Existing entries are updated when the setting changes and reconciled at
+  startup.
+- The MIDI indicator and Status line now reflect the connection the app
+  actually opened, not just whether a port with the right name exists.
+- Opening Config no longer blanks the mixer LEDs while it re-reads the knob
+  mode.
+- Hex, `wpctl` and `pactl` no longer block the async runtime. They run with
+  timeouts and are killed if they hang, and `xdg-open` is reaped in the
+  background.
+- The desktop entry quotes the binary path, so install paths containing
+  spaces work.
+
+### Build
+
+- The AppImage build pins appimagetool 1.9.1 and verifies its SHA-256. Native
+  and Docker builds share the same pinned tool.
+
 ## 1.1.0 - 2026-11-03
 
 ### Added

@@ -3305,7 +3305,7 @@ dependencies = [
 
 [[package]]
 name = "pipeweaver-smc-core"
-version = "1.1.0"
+version = "1.1.1"
 dependencies = [
  "anyhow",
  "log",
@@ -3318,7 +3318,7 @@ dependencies = [
 
 [[package]]
 name = "pipeweaver-smc-mixer"
-version = "1.1.0"
+version = "1.1.1"
 dependencies = [
  "anyhow",
  "clap",

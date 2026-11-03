@@ -9,7 +9,7 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
-  <a href="VERSION"><img src="https://img.shields.io/badge/version-1.1.0-orange.svg" alt="Version 1.1.0"></a>
+  <a href="VERSION"><img src="https://img.shields.io/badge/version-1.1.1-orange.svg" alt="Version 1.1.1"></a>
   <a href="https://ko-fi.com/desynkro"><img src="https://img.shields.io/badge/Ko--fi-support%20me-ff5e5b?logo=kofi&amp;logoColor=white" alt="Support me on Ko-fi"></a>
 </p>
 
@@ -103,8 +103,8 @@ Start Pipeweaver first. The app starts in the tray when launched with `--quiet`,
 Once published, the AppImage will be on the releases page:
 
 ```sh
-chmod +x Pipeweaver-SMC-Mixer-1.1.0-x86_64.AppImage
-./Pipeweaver-SMC-Mixer-1.1.0-x86_64.AppImage
+chmod +x Pipeweaver-SMC-Mixer-1.1.1-x86_64.AppImage
+./Pipeweaver-SMC-Mixer-1.1.1-x86_64.AppImage
 ```
 
 ## Features
@@ -113,6 +113,7 @@ chmod +x Pipeweaver-SMC-Mixer-1.1.0-x86_64.AppImage
 - **Personal and Audience:** faders control the A mix, knobs control the B mix, R swaps them per strip.
 - **Soft takeover:** faders and knobs wait for the current value before taking over.
 - **Endless knobs:** in relative mode every detent is one step in either direction, so the knobs never hit the mixer's 0/127 limits. The app detects the mode and can switch the preset it uses on the mixer, with a warning and a full backup first.
+- **Linked sources:** linked keeps the Personal/Audience ratio. Optional restrictions can disable the hardware Audience knob or the reverse function (R) while a source is linked.
 - **Targets:** target faders, mutes and explicit A/B routing. The bar follows the active mix.
 - **Split:** share the eight strips between sources and targets, from 8/0 down to 4/4. Default is 6/2.
 - **Off-surface channels:** extra sources and targets stay reachable in a drawer. It can be hidden in Config.
@@ -178,7 +179,7 @@ The app keeps a small config file at:
 ~/.config/pipeweaver/pipeweaver-smc-mixer.json
 ```
 
-It stores the connection mode, MIDI device name, mix labels, split, window width, light theme, channel colours, soft takeover, off-surface drawer visibility, record/Hex mode, whether Hex recording toggles, startup animation and start-minimized preference. The knob mode is not stored here; it is read from the mixer. Mixer backups are kept in `~/.local/state/pipeweaver-smc-mixer/mixer-backups`.
+It stores the connection mode, MIDI device name, mix labels, split, window width, light theme, channel colours, soft takeover, off-surface drawer visibility, record/Hex mode, whether Hex recording toggles, linked-source restrictions, startup animation and start-minimized preference. The knob mode is not stored here; it is read from the mixer. Mixer backups are kept in `~/.local/state/pipeweaver-smc-mixer/mixer-backups`.
 
 No audio, no daemon data and no telemetry leave your machine. The app only talks to Pipeweaver on localhost and to the mixer over MIDI.
 
