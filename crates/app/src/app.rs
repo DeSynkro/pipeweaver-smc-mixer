@@ -1286,7 +1286,6 @@ impl SmcApp {
     }
 
     fn paint_config(&mut self, ui: &mut egui::Ui, map: &Map, ctx: &Context, monitor: Option<Rect>) {
-        ctx.request_repaint_after(Duration::from_millis(16));
         let palette = theme::palette(self.config.light_panel);
         let panel = map.rect(theme::config_panel());
         let painter = ui.painter();
@@ -2624,7 +2623,14 @@ impl eframe::App for SmcApp {
                 self.pending_move = None;
             }
         }
-        ctx.request_repaint_after(Duration::from_millis(50));
+        let minimized = ctx
+            .input(|input| input.viewport().minimized)
+            .unwrap_or(false);
+        ctx.request_repaint_after(if minimized {
+            Duration::from_secs(1)
+        } else {
+            Duration::from_millis(50)
+        });
 
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE.fill(Color32::TRANSPARENT))
