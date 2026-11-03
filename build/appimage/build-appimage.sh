@@ -65,12 +65,32 @@ EOF
 chmod 0755 "$appdir/AppRun"
 
 mkdir -p "$tools"
-tool="$tools/appimagetool-x86_64.AppImage"
-if [ ! -x "$tool" ]; then
-    curl -L --fail -o "$tool" \
-        https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
-    chmod +x "$tool"
+tool_version="1.9.1"
+tool_sha256="ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0"
+tool="$tools/appimagetool-$tool_version-x86_64.AppImage"
+tool_url="https://github.com/AppImage/appimagetool/releases/download/$tool_version/appimagetool-x86_64.AppImage"
+
+verify_tool() {
+    printf '%s  %s\n' "$tool_sha256" "$1" | sha256sum --check --status
+}
+
+if [ ! -f "$tool" ]; then
+    echo "Fetching appimagetool $tool_version..."
+    tmp="$tool.tmp"
+    curl -L --fail -o "$tmp" "$tool_url"
+    if ! verify_tool "$tmp"; then
+        echo "Checksum mismatch for downloaded appimagetool" >&2
+        rm -f "$tmp"
+        exit 1
+    fi
+    mv "$tmp" "$tool"
 fi
+if ! verify_tool "$tool"; then
+    echo "Checksum mismatch for $tool" >&2
+    rm -f "$tool"
+    exit 1
+fi
+chmod +x "$tool"
 
 cd "$work_dir"
 rm -f "$output"

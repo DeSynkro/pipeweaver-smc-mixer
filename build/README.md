@@ -12,7 +12,9 @@ Everything Cargo and the packaging tools produce lives here.
 - `build/appimage/`: AppImage builder, AppDir, tools and the finished
   `Pipeweaver-SMC-Mixer-x86_64.AppImage`
 - `build/appimage/build-appimage.sh`: builds the release binary and packages it
-  as a single-file AppImage; the first run downloads `appimagetool`
+  as a single-file AppImage; the first run downloads the pinned,
+  checksum-verified `appimagetool` 1.9.1. The Docker AppImage build runs this
+  same script, so it uses the same pinned tool.
 - `build/docker/`: Dockerfile, Compose file, README and wrapper for building
   without installing the Rust toolchain or development headers on the host
 - `build/docker/build-in-docker.sh`: interactive Compose build helper for the

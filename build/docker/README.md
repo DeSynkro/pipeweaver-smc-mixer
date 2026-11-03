@@ -27,6 +27,11 @@ Docker builds stay separate from native builds:
 The normal `build/binary/` and `build/appimage/` outputs are not touched by a
 Docker build.
 
+The Docker AppImage build runs the shared
+`build/appimage/build-appimage.sh`, so it uses the same pinned and
+checksum-verified `appimagetool` 1.9.1 as the native build. Docker controls the
+build environment; the tool and its checksum are common to both paths.
+
 ## Binary compatibility
 
 The container is based on Debian 12 (bookworm), which uses glibc 2.36. A binary
