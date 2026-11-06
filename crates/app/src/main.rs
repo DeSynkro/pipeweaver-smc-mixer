@@ -3,6 +3,7 @@ mod knob_mode;
 mod media;
 mod meters;
 mod midi;
+mod power;
 mod single_instance;
 mod theme;
 mod tray;
@@ -53,6 +54,7 @@ async fn main() -> Result<()> {
     let start_minimized = args.quiet || initial.start_minimized;
 
     let stop = Arc::new(AtomicBool::new(false));
+    let power_blackout = power::Blackout::new();
     let ui_on = Arc::new(AtomicBool::new(true));
     let focus = Arc::new(AtomicBool::new(false));
     let minimized = Arc::new(AtomicBool::new(false));
@@ -146,6 +148,8 @@ async fn main() -> Result<()> {
             }
         });
     }
+
+    tokio::spawn(power::run(power_blackout.clone()));
 
     let midi_link = Arc::new(AtomicU8::new(midi::Link::Offline.code()));
     {
@@ -276,6 +280,7 @@ async fn main() -> Result<()> {
         let midi_startup_animation = startup_animation.clone();
         let midi_animation_preview = animation_preview.clone();
         let midi_stop = stop.clone();
+        let midi_power_blackout = power_blackout.clone();
         std::thread::spawn(move || {
             midi::run_controls(
                 config,
@@ -299,6 +304,7 @@ async fn main() -> Result<()> {
                 midi_last_midi,
                 midi_led_test,
                 midi_stop,
+                midi_power_blackout,
                 midi_startup_animation,
                 midi_animation_preview,
             )

@@ -1,5 +1,6 @@
 use crate::knob_mode::{self, KnobMode, MODE_RELATIVE, REQUEST_NONE};
 use crate::media::MediaCommand;
+use crate::power::Blackout;
 use egui::ViewportCommand;
 use midir::{
     MidiInput, MidiInputConnection, MidiInputPort, MidiOutput, MidiOutputConnection, MidiOutputPort,
@@ -254,6 +255,7 @@ pub fn run_controls(
     last_midi: Arc<AtomicU64>,
     led_test: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
+    power_blackout: Blackout,
     startup_animation: Arc<AtomicBool>,
     animation_preview: Arc<AtomicBool>,
 ) {
@@ -402,6 +404,13 @@ pub fn run_controls(
         log::info!("MIDI control connected: {} ({:?})", port.name, port.link);
 
         let mut leds = [u8::MAX; 32];
+        // A reconnect during a sleep or shutdown must not leave the fresh
+        // device lit while the surface is meant to stay dark.
+        if power_blackout.holding()
+            && let Some(output) = output.as_mut()
+        {
+            blackout(output, &mut leds);
+        }
         let mut animation_active = !startup_played && startup_animation.load(Ordering::Relaxed);
         let mut animation_elapsed = 0u64;
         let mut test_frames = 0u8;
@@ -410,39 +419,53 @@ pub fn run_controls(
         loop {
             if stop.load(Ordering::Relaxed) {
                 if let Some(output) = output.as_mut() {
-                    blackout(output);
+                    blackout(output, &mut leds);
+                }
+                if let Some(generation) = power_blackout.pending() {
+                    power_blackout.complete(generation);
                 }
                 return;
+            }
+            // A sleep or shutdown is in progress: send the dark frame, confirm
+            // it, and leave the surface dark until the power watcher releases
+            // the hold on resume.
+            if let Some(generation) = power_blackout.pending() {
+                if let Some(output) = output.as_mut() {
+                    blackout(output, &mut leds);
+                }
+                power_blackout.complete(generation);
             }
             if knob_mode.request.load(Ordering::Relaxed) != REQUEST_NONE {
                 // Internal config refresh: the device and its LED state are
                 // unchanged, so leave the surface lit across the reconnect.
                 break;
             }
-            if animation_preview.swap(false, Ordering::Relaxed) {
-                animation_active = true;
-                animation_elapsed = 0;
-            }
-            if animation_active {
-                animation_elapsed += 50;
-                if let Some(pattern) = startup_pattern(animation_elapsed) {
-                    if let Some(output) = output.as_mut() {
-                        send_pattern(output, &pattern, &mut leds);
+            if !power_blackout.holding() {
+                if animation_preview.swap(false, Ordering::Relaxed) {
+                    animation_active = true;
+                    animation_elapsed = 0;
+                }
+                if animation_active {
+                    animation_elapsed += 50;
+                    if let Some(pattern) = startup_pattern(animation_elapsed) {
+                        if let Some(output) = output.as_mut() {
+                            send_pattern(output, &pattern, &mut leds);
+                        }
+                    } else {
+                        animation_active = false;
+                        startup_played = true;
                     }
-                } else {
-                    animation_active = false;
-                    startup_played = true;
+                } else if led_test.swap(false, Ordering::Relaxed) {
+                    test_frames = 10;
+                } else if test_frames > 0 {
+                    if let Some(output) = output.as_mut() {
+                        send_pattern(output, &[LED_ON; 32], &mut leds);
+                    }
+                    test_frames -= 1;
+                } else if let Some(output) = output.as_mut() {
+                    let snapshot = engine.snapshot();
+                    send_leds(output, &snapshot, &swap, &mut leds);
                 }
-            } else if led_test.swap(false, Ordering::Relaxed) {
-                test_frames = 10;
-            } else if test_frames > 0 {
-                if let Some(output) = output.as_mut() {
-                    send_pattern(output, &[LED_ON; 32], &mut leds);
-                }
-                test_frames -= 1;
-            } else if let Some(output) = output.as_mut() {
-                let snapshot = engine.snapshot();
-                send_leds(output, &snapshot, &swap, &mut leds);
             }
             std::thread::sleep(Duration::from_millis(50));
             if last_check.elapsed() >= Duration::from_secs(1) {
@@ -454,7 +477,7 @@ pub fn run_controls(
                         let _ = media.send(MediaCommand::HexStop);
                     }
                     if let Some(output) = output.as_mut() {
-                        blackout(output);
+                        blackout(output, &mut leds);
                     }
                     break;
                 }
@@ -466,7 +489,7 @@ pub fn run_controls(
                         let _ = media.send(MediaCommand::HexStop);
                     }
                     if let Some(output) = output.as_mut() {
-                        blackout(output);
+                        blackout(output, &mut leds);
                     }
                     break;
                 }
@@ -475,11 +498,17 @@ pub fn run_controls(
     }
 }
 
-/// Turn every surface LED off before the output is dropped.
-fn blackout(output: &mut MidiOutputConnection) {
-    for note in 0..32 {
-        let _ = output.send(&[0x90, note, 0]);
+/// Turn every surface LED off and mark the cache dark, so the next normal
+/// frame after resume is sent instead of being skipped as unchanged.
+fn blackout(output: &mut MidiOutputConnection, leds: &mut [u8; 32]) {
+    for message in blackout_frames(leds) {
+        let _ = output.send(&message);
     }
+}
+
+fn blackout_frames(leds: &mut [u8; 32]) -> [[u8; 3]; 32] {
+    leds.fill(LED_OFF);
+    std::array::from_fn(|note| [0x90, note as u8, LED_OFF])
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -980,8 +1009,8 @@ fn startup_pattern(elapsed_ms: u64) -> Option<[u8; 32]> {
 #[cfg(test)]
 mod tests {
     use super::{
-        KnobBank, LED_OFF, LED_ON, PickupState, choose_index, device_key, led_pattern,
-        output_candidates, relative_delta,
+        KnobBank, LED_OFF, LED_ON, PickupState, blackout_frames, choose_index, device_key,
+        led_pattern, output_candidates, relative_delta,
     };
     use pipeweaver_smc_core::config::MidiMode;
     use pipeweaver_smc_core::engine::Snapshot;
@@ -989,6 +1018,18 @@ mod tests {
 
     fn names(list: &[&str]) -> Vec<String> {
         list.iter().map(|name| name.to_string()).collect()
+    }
+
+    #[test]
+    fn a_blackout_marks_the_led_cache_dark() {
+        let mut leds = [LED_ON; 32];
+
+        let messages = blackout_frames(&mut leds);
+
+        assert_eq!(messages.len(), 32);
+        assert_eq!(messages[0], [0x90, 0, LED_OFF]);
+        assert_eq!(messages[31], [0x90, 31, LED_OFF]);
+        assert_eq!(leds, [LED_OFF; 32]);
     }
 
     #[test]
