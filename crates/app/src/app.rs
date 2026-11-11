@@ -1491,6 +1491,7 @@ impl SmcApp {
                     paint_routing_table(
                         ui,
                         inner.width(),
+                        inner.height(),
                         map.scale,
                         &snapshot.routing,
                         palette,
@@ -3651,17 +3652,19 @@ fn colour32((red, green, blue): (u8, u8, u8)) -> Color32 {
 fn paint_routing_table(
     ui: &mut egui::Ui,
     content_width: f32,
+    content_height: f32,
     scale: f32,
     routing: &Routing,
     palette: &theme::Palette,
     toggle: &mut Option<(Ulid, Ulid, bool)>,
 ) {
-    let label_width = (150.0 * scale).max(90.0);
+    let label_width = (170.0 * scale).max(100.0);
     let columns = routing.sources.len().max(1) as f32;
-    let column_width = ((content_width - label_width) / columns).clamp(44.0 * scale, 90.0 * scale);
-    let row_height = (28.0 * scale).max(20.0);
-    let header_height = (34.0 * scale).max(24.0);
-    let font = FontId::proportional((12.0 * scale).max(9.0));
+    let rows = routing.targets.len().max(1) as f32;
+    let column_width = ((content_width - label_width) / columns).clamp(44.0 * scale, 180.0 * scale);
+    let row_height = (content_height / (rows + 1.0)).clamp(30.0 * scale, 46.0 * scale);
+    let header_height = row_height + 6.0 * scale;
+    let font = FontId::proportional((column_width * 0.16).clamp(10.0, 14.0));
 
     egui::ScrollArea::both()
         .id_salt("pipeweaver-routing")
