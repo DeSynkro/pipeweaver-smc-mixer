@@ -79,6 +79,10 @@ Then launch the release AppImage and check:
 
 - the window opens and the tray works;
 - Config opens and the Pipeweaver status is correct;
+- the Pipeweaver page lists applications and the routing table matches the daemon;
+- the startup animation dropdown previews each style;
+- suspend and power-off black out the 32 strip LEDs;
+- the app button toggles on a short press and opens Pipeweaver when held;
 - Pipeweaver connects and reconnects;
 - MIDI controls respond;
 - autostart works from the AppImage;

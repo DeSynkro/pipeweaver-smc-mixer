@@ -2,10 +2,16 @@
 
 Post-1.0 work. 1.0 covered the app, the AppImage/Docker builds and the
 initial documentation. 1.1 added endless knobs and the Hex toggle; 1.1.1
-added the first batch of fixes and cleanup.
+added the first batch of fixes and cleanup. 1.2 added the Pipeweaver page,
+sleep/shutdown LED blackout and selectable startup animations.
 
 ## Later
 
+- Verify the shutdown blackout through a real power-off, then add shutdown
+  animations if it proves reliable.
+- Per-application volume and mute in the Pipeweaver list.
+- Decide whether a system-level fallback is ever needed for LEDs when the app
+  is not running.
 - Decide and fix off-surface R semantics while linked. Linked mode is a
   ratio, so the current two-command swap may not land cleanly.
 - Clip off-surface card titles.
@@ -14,7 +20,6 @@ added the first batch of fixes and cleanup.
 - Make soft takeover more tolerant of feedback lag.
 - Prune meters and clear them when the meter socket closes.
 - Persist window position and maximize state.
-- Reap `xdg-open` child processes.
 - Harden engine lock handling against poisoning and the connected/offline race.
 - Security hardening: localhost trust, symlink/temp handling, MIDI port
   impersonation, websocket/MPRIS timeouts, dependency pinning, signed checksums.

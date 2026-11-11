@@ -1,5 +1,60 @@
 # Changelog
 
+## 1.2.0 - 2026-11-11
+
+### Added
+
+- A Pipeweaver screen, opened from the third navigation button. It splits the
+  page into an application list on top and the routing table below, so both
+  stay visible at once.
+- The application list shows running output and input applications grouped by
+  process, with each application's current route. A dropdown reassigns it to a
+  virtual source or target, or back to Default. Applications that stop stay
+  listed for ten seconds with a countdown ring, so their route can still be
+  changed; the countdown pauses while the dropdown is open.
+- The routing table shows sources as columns and targets as rows, with the
+  current routes checked in the target's mix colour. It fills the available
+  width and scales its rows, columns and labels, and scrolls when it outgrows
+  the pane.
+- An "Open Pipeweaver" link on the Pipeweaver page, which opens the daemon's
+  own UI.
+- Eight selectable startup animations: Classic, Sweep, Chase, Wave, Sparkle,
+  Pulse, Ripple and Rain. Config gets an animation dropdown, and selecting a
+  style previews it immediately. Chase sweeps the Square, R, S and M rows in
+  that order.
+- The app blacks out the 32 surface LEDs before suspend and power-off. It
+  holds logind delay inhibitors, sends the note-offs on a separate short-lived
+  MIDI connection as soon as the event arrives, and keeps the normal MIDI
+  thread as a second path. Normal termination and SIGTERM also send the
+  blackout.
+- The app button now toggles the window on a short release and switches to the
+  Pipeweaver screen when held for one second. This applies to both the hardware
+  button (CC 61) and the left on-screen arrow.
+
+### Changed
+
+- The former Pipeweaver button (CC 62) and the right on-screen arrow are
+  unbound.
+- The navigation has a third button, and its frames stay visible on the Mixer
+  screen.
+- The startup animation setting is stored by name. Existing configs default to
+  Classic.
+
+### Fixed
+
+- The surface LEDs could stay lit through a PC shutdown because the session
+  killed the MIDI thread before it could send the blackout. The emergency
+  connection removes that dependency. The firmware-owned transport LEDs are
+  unchanged and still cannot be controlled.
+- The Pipeweaver navigation frame was invisible while the Mixer screen was
+  active.
+
+### Notes
+
+- The shutdown blackout is best effort. If the app was already closed, was
+  hard-killed, or the mixer was disconnected, there is no process left to send
+  the note-offs.
+
 ## 1.1.1 - 2026-11-03
 
 ### Added

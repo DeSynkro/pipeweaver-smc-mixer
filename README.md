@@ -9,7 +9,7 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
-  <a href="VERSION"><img src="https://img.shields.io/badge/version-1.1.1-orange.svg" alt="Version 1.1.1"></a>
+  <a href="VERSION"><img src="https://img.shields.io/badge/version-1.2.0-orange.svg" alt="Version 1.2.0"></a>
   <a href="https://ko-fi.com/desynkro"><img src="https://img.shields.io/badge/Ko--fi-support%20me-ff5e5b?logo=kofi&amp;logoColor=white" alt="Support me on Ko-fi"></a>
 </p>
 
@@ -103,8 +103,8 @@ Start Pipeweaver first. The app starts in the tray when launched with `--quiet`,
 Once published, the AppImage will be on the releases page:
 
 ```sh
-chmod +x Pipeweaver-SMC-Mixer-1.1.1-x86_64.AppImage
-./Pipeweaver-SMC-Mixer-1.1.1-x86_64.AppImage
+chmod +x Pipeweaver-SMC-Mixer-1.2.0-x86_64.AppImage
+./Pipeweaver-SMC-Mixer-1.2.0-x86_64.AppImage
 ```
 
 ## Features
@@ -118,15 +118,31 @@ chmod +x Pipeweaver-SMC-Mixer-1.1.1-x86_64.AppImage
 - **Split:** share the eight strips between sources and targets, from 8/0 down to 4/4. Default is 6/2.
 - **Off-surface channels:** extra sources and targets stay reachable in a drawer. It can be hidden in Config.
 - **LED feedback:** M, S, R and link LEDs follow the state. The arrow LEDs stay local.
-- **Startup animation:** the strip LEDs fill left to right once per launch. It can be previewed or disabled.
+- **Startup animations:** eight selectable styles, from Classic to Rain. Choosing one in Config previews it immediately, and the animation can be disabled.
+- **Pipeweaver screen:** running applications with their routes, and the full source-to-target routing table, on one page. Stopped applications linger for ten seconds so a route can still be changed.
+- **Sleep and shutdown blackout:** the 32 strip LEDs are turned off before suspend and power-off. The firmware-owned transport LEDs remain unchanged.
+- **App button:** a short press shows or hides the app; holding for one second opens it on the Pipeweaver screen. The old right-arrow Pipeweaver shortcut is unbound.
 - **Transport:** play, pause, record, seek, track skip and the split buttons.
 - **Record button:** hold for [Hex](https://github.com/anomalyco/hex) dictation, or enable Toggle Hex recording in Config or the tray to press once to start and again to stop. When Hex mode is off, tap toggles the default microphone mute.
-- **One window, two screens:** the mixer faceplate, and a Config screen in the same chassis.
+- **One window, three screens:** the mixer faceplate, Config and the Pipeweaver page in the same chassis.
 - **Frameless and aspect locked:** the faceplate is the window. It resizes without stretching.
 - **Light theme:** switch the whole app between the dark chassis and a light one, with optional channel colours.
 - **Offline state:** faders and knobs grey out and a reconnect card appears when Pipeweaver disconnects. LEDs go dark with the exception of the BT, Shift, Play, Pause and Arrow Buttons as they cannot be Software Controlled.
 - **Tray and autostart:** close to tray, reopen with a click, start minimized on login. The tray also switches MIDI connection, soft takeover and Hex mode, and shows the Hex recording toggle when Hex mode is on.
 - **No telemetry:** no accounts, no analytics, no cloud.
+
+### Pipeweaver screen
+
+The third navigation button opens a page split between applications and
+routing.
+
+- **Applications** lists running output and input applications grouped by
+  process. Use the route dropdown to send an application to a virtual source
+  or target, or back to Default. A stopped application stays for ten seconds
+  with a countdown ring so its route can still be changed.
+- **Routing** shows sources as columns and targets as rows. Click a cell to
+  connect or disconnect a source and target.
+- **Open Pipeweaver** opens the daemon's own UI.
 
 ## SMC mapping
 
@@ -149,9 +165,10 @@ The app expects the mixer's factory preset on MIDI channel 1. No programming is 
 | Rewind / Forward | CC 55 / 56 |
 | Previous / Next | CC 57 / 58 |
 | Split up / down | CC 59 / 60 |
-| Left / right | CC 61 / 62 |
+| Left arrow | CC 61 (show/hide; hold for Pipeweaver) |
+| Right arrow | CC 62 (unbound) |
 
-On source strips the second button is labelled **A** on screen but corresponds to the hardware **S** button. it mutes the Audience/B mix. On target strips, **S** selects mix A and **R** selects mix B.
+On source strips the second button is labelled **A** on screen but corresponds to the hardware **S** button. It mutes the Audience/B mix. On target strips, **S** selects mix A and **R** selects mix B.
 
 If the controls do not respond, the mixer may have been remapped or be on a different preset slot.
 
@@ -179,7 +196,7 @@ The app keeps a small config file at:
 ~/.config/pipeweaver/pipeweaver-smc-mixer.json
 ```
 
-It stores the connection mode, MIDI device name, mix labels, split, window width, light theme, channel colours, soft takeover, off-surface drawer visibility, record/Hex mode, whether Hex recording toggles, linked-source restrictions, startup animation and start-minimized preference. The knob mode is not stored here; it is read from the mixer. Mixer backups are kept in `~/.local/state/pipeweaver-smc-mixer/mixer-backups`.
+It stores the connection mode, MIDI device name, mix labels, split, window width, light theme, channel colours, soft takeover, off-surface drawer visibility, record/Hex mode, whether Hex recording toggles, linked-source restrictions, the startup animation style and start-minimized preference. The knob mode is not stored here; it is read from the mixer. Mixer backups are kept in `~/.local/state/pipeweaver-smc-mixer/mixer-backups`.
 
 No audio, no daemon data and no telemetry leave your machine. The app only talks to Pipeweaver on localhost and to the mixer over MIDI.
 
@@ -208,6 +225,15 @@ Check the cable or the Bluetooth pairing. The app reconnects automatically, and 
 ### The buttons do nothing
 
 The mixer may have been remapped or be on a different preset slot. Restore the factory preset or match the table in [SMC mapping](#smc-mapping).
+
+### The strip LEDs stay lit after shutdown
+
+The app sends the blackout on a separate short-lived MIDI connection as soon
+as shutdown is announced, so it no longer depends on the main MIDI thread. It
+is still best effort: if the app was already closed, was hard-killed, or the
+mixer was disconnected, there is no process left to send the note-offs. The
+BT, Shift, Play, Pause and arrow LEDs are firmware-owned and stay lit while
+the mixer has power.
 
 ### The AppImage does not start
 
