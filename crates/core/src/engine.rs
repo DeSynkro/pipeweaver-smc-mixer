@@ -53,6 +53,7 @@ pub struct Snapshot {
     pub channels: Vec<Channel>,
     pub off_surface: Vec<Channel>,
     pub applications: Applications,
+    pub routing: Routing,
 }
 
 impl Default for Snapshot {
@@ -62,6 +63,7 @@ impl Default for Snapshot {
             channels: vec![Channel::default(); STRIP_COUNT],
             off_surface: Vec::new(),
             applications: Applications::default(),
+            routing: Routing::default(),
         }
     }
 }
@@ -102,6 +104,23 @@ pub struct Applications {
     pub input: Vec<AppGroup>,
     pub output_routes: Vec<RouteChoice>,
     pub input_routes: Vec<RouteChoice>,
+}
+
+/// One source or target column/row in the routing table.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RoutingDevice {
+    pub id: Ulid,
+    pub name: String,
+    pub colour: (u8, u8, u8),
+    pub mix: Option<Mix>,
+}
+
+/// Sources, targets and the enabled source-target pairs.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Routing {
+    pub sources: Vec<RoutingDevice>,
+    pub targets: Vec<RoutingDevice>,
+    pub routes: HashSet<(Ulid, Ulid)>,
 }
 
 pub struct Engine {
@@ -227,7 +246,102 @@ fn build(status: &DaemonStatus, source_slots: usize) -> Snapshot {
         channels,
         off_surface,
         applications: build_applications(status),
+        routing: build_routing(status),
     }
+}
+
+fn build_routing(status: &DaemonStatus) -> Routing {
+    let sources = ordered_source_ids(status)
+        .into_iter()
+        .filter_map(|id| routing_source(status, id))
+        .collect();
+    let targets = ordered_target_ids(status)
+        .into_iter()
+        .filter_map(|id| routing_target(status, id))
+        .collect();
+    let routes = status
+        .audio
+        .profile
+        .routes
+        .iter()
+        .flat_map(|(source, targets)| targets.iter().map(move |target| (*source, *target)))
+        .collect();
+
+    Routing {
+        sources,
+        targets,
+        routes,
+    }
+}
+
+fn routing_source(status: &DaemonStatus, id: Ulid) -> Option<RoutingDevice> {
+    let devices = &status.audio.profile.devices.sources;
+
+    for device in &devices.physical_devices {
+        if device.description.id == id {
+            return Some(RoutingDevice {
+                id,
+                name: device.description.name.clone(),
+                colour: colour(
+                    device.description.colour.red,
+                    device.description.colour.green,
+                    device.description.colour.blue,
+                ),
+                mix: None,
+            });
+        }
+    }
+    for device in &devices.virtual_devices {
+        if device.description.id == id {
+            return Some(RoutingDevice {
+                id,
+                name: device.description.name.clone(),
+                colour: colour(
+                    device.description.colour.red,
+                    device.description.colour.green,
+                    device.description.colour.blue,
+                ),
+                mix: None,
+            });
+        }
+    }
+
+    None
+}
+
+fn routing_target(status: &DaemonStatus, id: Ulid) -> Option<RoutingDevice> {
+    let devices = &status.audio.profile.devices.targets;
+
+    for device in &devices.physical_devices {
+        if device.description.id == id {
+            return Some(RoutingDevice {
+                id,
+                name: device.description.name.clone(),
+                colour: colour(
+                    device.description.colour.red,
+                    device.description.colour.green,
+                    device.description.colour.blue,
+                ),
+                mix: Some(device.mix),
+            });
+        }
+    }
+    for device in &devices.virtual_devices {
+        if device.description.id == id {
+            return Some(RoutingDevice {
+                id,
+                name: device.description.name.clone(),
+                colour: colour(
+                    device.description.colour.red,
+                    device.description.colour.green,
+                    device.description.colour.blue,
+                ),
+                mix: Some(device.mix),
+            });
+        }
+    }
+
+    None
 }
 
 fn build_applications(status: &DaemonStatus) -> Applications {
@@ -474,6 +588,67 @@ mod tests {
         assert_eq!(engine.source_slots(), 4);
         engine.set_source_slots(9);
         assert_eq!(engine.source_slots(), 8);
+    }
+
+    #[test]
+    fn builds_the_routing_table_in_device_order() {
+        let source_a = Ulid::new();
+        let source_b = Ulid::new();
+        let target = Ulid::new();
+        let mut status = DaemonStatus::default();
+
+        for (id, name) in [(source_a, "Browser"), (source_b, "Game")] {
+            status
+                .audio
+                .profile
+                .devices
+                .sources
+                .virtual_devices
+                .push(Default::default());
+            let device = status
+                .audio
+                .profile
+                .devices
+                .sources
+                .virtual_devices
+                .last_mut()
+                .unwrap();
+            device.description.id = id;
+            device.description.name = name.to_string();
+        }
+        status.audio.profile.devices.sources.device_order[OrderGroup::Pinned].push(source_b);
+
+        status
+            .audio
+            .profile
+            .devices
+            .targets
+            .virtual_devices
+            .push(Default::default());
+        {
+            let device = &mut status.audio.profile.devices.targets.virtual_devices[0];
+            device.description.id = target;
+            device.description.name = "Stream".to_string();
+            device.mix = Mix::B;
+        }
+        status
+            .audio
+            .profile
+            .routes
+            .insert(source_a, HashSet::from([target]));
+
+        let engine = Engine::new(8);
+        engine.apply(status);
+        let routing = &engine.snapshot().routing;
+
+        assert_eq!(routing.sources.len(), 2);
+        assert_eq!(routing.sources[0].id, source_b);
+        assert_eq!(routing.sources[1].id, source_a);
+        assert_eq!(routing.targets.len(), 1);
+        assert_eq!(routing.targets[0].name, "Stream");
+        assert_eq!(routing.targets[0].mix, Some(Mix::B));
+        assert!(routing.routes.contains(&(source_a, target)));
+        assert!(!routing.routes.contains(&(source_b, target)));
     }
 
     #[test]

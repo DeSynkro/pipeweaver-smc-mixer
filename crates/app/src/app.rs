@@ -14,7 +14,7 @@ use pipeweaver_ipc::commands::{APICommand, DaemonRequest};
 use pipeweaver_shared::{AppDefinition, DeviceType, Mix, MuteState, MuteTarget};
 use pipeweaver_smc_core::config::{Config, MidiMode, autostart_path, set_autostart, state_dir};
 use pipeweaver_smc_core::{
-    AppEntry, Channel, ChannelKind, Engine, STRIP_COUNT, SURFACE_SOURCES_DEFAULT,
+    AppEntry, Channel, ChannelKind, Engine, Routing, STRIP_COUNT, SURFACE_SOURCES_DEFAULT,
     SURFACE_SOURCES_MAX, SURFACE_SOURCES_MIN, Snapshot,
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -128,6 +128,7 @@ pub struct SmcApp {
     config_path: PathBuf,
     screen: Screen,
     pipeweaver_input: bool,
+    pipeweaver_routing: bool,
     apps_cache: HashMap<AppKey, CachedApp>,
     pipeweaver_online: bool,
     engine: Arc<Engine>,
@@ -212,6 +213,7 @@ impl SmcApp {
             config_path,
             screen: Screen::Mixer,
             pipeweaver_input: false,
+            pipeweaver_routing: false,
             apps_cache: HashMap::new(),
             pipeweaver_online: false,
             engine,
@@ -1347,6 +1349,7 @@ impl SmcApp {
         let body = (15.0 * map.scale).max(11.0);
 
         let mut show_input = self.pipeweaver_input;
+        let mut show_routing = self.pipeweaver_routing;
         let mut route_command = None;
         let commands = self.commands.clone();
         let refresh = Instant::now();
@@ -1436,16 +1439,31 @@ impl SmcApp {
                     );
                     ui.add_space(18.0);
                     if ui
-                        .selectable_label(!show_input, RichText::new("Output").size(label))
+                        .selectable_label(!show_routing, RichText::new("Applications").size(label))
                         .clicked()
                     {
-                        show_input = false;
+                        show_routing = false;
                     }
                     if ui
-                        .selectable_label(show_input, RichText::new("Input").size(label))
+                        .selectable_label(show_routing, RichText::new("Routing").size(label))
                         .clicked()
                     {
-                        show_input = true;
+                        show_routing = true;
+                    }
+                    if !show_routing {
+                        ui.add_space(18.0);
+                        if ui
+                            .selectable_label(!show_input, RichText::new("Output").size(label))
+                            .clicked()
+                        {
+                            show_input = false;
+                        }
+                        if ui
+                            .selectable_label(show_input, RichText::new("Input").size(label))
+                            .clicked()
+                        {
+                            show_input = true;
+                        }
                     }
                 });
 
@@ -1456,6 +1474,33 @@ impl SmcApp {
                             .size(label)
                             .color(palette.dim),
                     );
+                    return;
+                }
+
+                if show_routing {
+                    if snapshot.routing.sources.is_empty() || snapshot.routing.targets.is_empty() {
+                        ui.add_space(8.0);
+                        ui.label(
+                            RichText::new("No routing devices are available.")
+                                .size(label)
+                                .color(palette.dim),
+                        );
+                        return;
+                    }
+                    let mut toggle = None;
+                    paint_routing_table(
+                        ui,
+                        inner.width(),
+                        map.scale,
+                        &snapshot.routing,
+                        palette,
+                        &mut toggle,
+                    );
+                    if let Some((source, target, enabled)) = toggle {
+                        let _ = commands.try_send(DaemonRequest::Pipewire(APICommand::SetRoute(
+                            source, target, enabled,
+                        )));
+                    }
                     return;
                 }
 
@@ -1574,6 +1619,7 @@ impl SmcApp {
         );
 
         self.pipeweaver_input = show_input;
+        self.pipeweaver_routing = show_routing;
 
         if let Some((process, name, route)) = route_command {
             let definition = AppDefinition {
@@ -3596,6 +3642,135 @@ fn draw_tab(
         ],
         Stroke::new(1.5, palette.accent),
     );
+}
+
+fn colour32((red, green, blue): (u8, u8, u8)) -> Color32 {
+    Color32::from_rgb(red, green, blue)
+}
+
+fn paint_routing_table(
+    ui: &mut egui::Ui,
+    content_width: f32,
+    scale: f32,
+    routing: &Routing,
+    palette: &theme::Palette,
+    toggle: &mut Option<(Ulid, Ulid, bool)>,
+) {
+    let label_width = (150.0 * scale).max(90.0);
+    let columns = routing.sources.len().max(1) as f32;
+    let column_width = ((content_width - label_width) / columns).clamp(44.0 * scale, 90.0 * scale);
+    let row_height = (28.0 * scale).max(20.0);
+    let header_height = (34.0 * scale).max(24.0);
+    let font = FontId::proportional((12.0 * scale).max(9.0));
+
+    egui::ScrollArea::both()
+        .id_salt("pipeweaver-routing")
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing = Vec2::ZERO;
+
+            ui.horizontal(|ui| {
+                let (rect, _) =
+                    ui.allocate_exact_size(vec2(label_width, header_height), Sense::hover());
+                ui.painter().text(
+                    pos2(rect.left() + 8.0 * scale, rect.center().y),
+                    Align2::LEFT_CENTER,
+                    "Targets",
+                    FontId::proportional((11.0 * scale).max(9.0)),
+                    palette.dim,
+                );
+                for source in &routing.sources {
+                    let (rect, _) =
+                        ui.allocate_exact_size(vec2(column_width, header_height), Sense::hover());
+                    let painter = ui.painter_at(rect);
+                    painter.text(
+                        rect.center() - vec2(0.0, 2.0 * scale),
+                        Align2::CENTER_CENTER,
+                        source.name.as_str(),
+                        font.clone(),
+                        palette.text,
+                    );
+                    let bar = Rect::from_min_max(
+                        pos2(rect.left() + 3.0 * scale, rect.bottom() - 3.0 * scale),
+                        pos2(rect.right() - 3.0 * scale, rect.bottom() - 1.0 * scale),
+                    );
+                    painter.rect_filled(bar, 0.0, colour32(source.colour));
+                }
+            });
+
+            ui.add_space(4.0 * scale);
+
+            for target in &routing.targets {
+                ui.horizontal(|ui| {
+                    let (rect, _) =
+                        ui.allocate_exact_size(vec2(label_width, row_height), Sense::hover());
+                    let painter = ui.painter_at(rect);
+                    let bar = Rect::from_min_max(
+                        pos2(rect.left() + 4.0 * scale, rect.top() + 4.0 * scale),
+                        pos2(rect.left() + 7.0 * scale, rect.bottom() - 4.0 * scale),
+                    );
+                    painter.rect_filled(bar, 0.0, colour32(target.colour));
+                    painter.text(
+                        pos2(rect.left() + 12.0 * scale, rect.center().y),
+                        Align2::LEFT_CENTER,
+                        target.name.as_str(),
+                        font.clone(),
+                        palette.text,
+                    );
+
+                    for source in &routing.sources {
+                        let (rect, response) =
+                            ui.allocate_exact_size(vec2(column_width, row_height), Sense::click());
+                        let enabled = routing.routes.contains(&(source.id, target.id));
+                        let cell = rect.shrink(2.0 * scale);
+                        let shape = egui::CornerRadius::same(4);
+                        let painter = ui.painter_at(rect);
+                        painter.rect_filled(cell, shape, palette.field);
+                        painter.rect_stroke(
+                            cell,
+                            shape,
+                            Stroke::new(1.0, palette.border),
+                            StrokeKind::Inside,
+                        );
+                        if enabled {
+                            let fill = match target.mix {
+                                Some(Mix::B) => palette.amber,
+                                _ => palette.accent,
+                            };
+                            painter.rect_filled(cell, shape, fill);
+                            let center = cell.center();
+                            let size = cell.width().min(cell.height()) * 0.22;
+                            let stroke = Stroke::new((2.0 * scale).max(1.0), palette.panel);
+                            painter.line_segment(
+                                [
+                                    center + vec2(-size, 0.0),
+                                    center + vec2(-size * 0.2, size * 0.8),
+                                ],
+                                stroke,
+                            );
+                            painter.line_segment(
+                                [
+                                    center + vec2(-size * 0.2, size * 0.8),
+                                    center + vec2(size, -size * 0.7),
+                                ],
+                                stroke,
+                            );
+                        }
+                        if response.hovered() {
+                            painter.rect_stroke(
+                                cell,
+                                shape,
+                                Stroke::new((1.5 * scale).max(1.0), palette.accent),
+                                StrokeKind::Inside,
+                            );
+                        }
+                        if response.clicked() {
+                            *toggle = Some((source.id, target.id, !enabled));
+                        }
+                    }
+                });
+            }
+        });
 }
 
 fn draw_app_countdown(
