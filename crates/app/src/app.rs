@@ -128,7 +128,6 @@ pub struct SmcApp {
     config_path: PathBuf,
     screen: Screen,
     pipeweaver_input: bool,
-    pipeweaver_routing: bool,
     apps_cache: HashMap<AppKey, CachedApp>,
     pipeweaver_online: bool,
     engine: Arc<Engine>,
@@ -213,7 +212,6 @@ impl SmcApp {
             config_path,
             screen: Screen::Mixer,
             pipeweaver_input: false,
-            pipeweaver_routing: false,
             apps_cache: HashMap::new(),
             pipeweaver_online: false,
             engine,
@@ -1348,9 +1346,17 @@ impl SmcApp {
         let label = (16.0 * map.scale).max(12.0);
         let body = (15.0 * map.scale).max(11.0);
 
+        let gap = 12.0 * map.scale;
+        let top_height = (inner.height() - gap) * 0.58;
+        let top = Rect::from_min_size(inner.min, vec2(inner.width(), top_height));
+        let bottom = Rect::from_min_size(
+            pos2(inner.left(), top.bottom() + gap),
+            vec2(inner.width(), inner.height() - top_height - gap),
+        );
+
         let mut show_input = self.pipeweaver_input;
-        let mut show_routing = self.pipeweaver_routing;
         let mut route_command = None;
+        let mut routing_toggle = None;
         let commands = self.commands.clone();
         let refresh = Instant::now();
         let side = if show_input {
@@ -1427,45 +1433,11 @@ impl SmcApp {
 
         ui.scope_builder(
             UiBuilder::new()
-                .max_rect(inner)
+                .max_rect(top)
                 .layout(Layout::top_down(Align::LEFT)),
             |ui| {
                 ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
-                ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new("Pipeweaver")
-                            .font(FontId::proportional(heading))
-                            .color(palette.text),
-                    );
-                    ui.add_space(18.0);
-                    if ui
-                        .selectable_label(!show_routing, RichText::new("Applications").size(label))
-                        .clicked()
-                    {
-                        show_routing = false;
-                    }
-                    if ui
-                        .selectable_label(show_routing, RichText::new("Routing").size(label))
-                        .clicked()
-                    {
-                        show_routing = true;
-                    }
-                    if !show_routing {
-                        ui.add_space(18.0);
-                        if ui
-                            .selectable_label(!show_input, RichText::new("Output").size(label))
-                            .clicked()
-                        {
-                            show_input = false;
-                        }
-                        if ui
-                            .selectable_label(show_input, RichText::new("Input").size(label))
-                            .clicked()
-                        {
-                            show_input = true;
-                        }
-                    }
-                });
+                pipeweaver_header(ui, heading, label, palette, &mut show_input);
 
                 if !snapshot.connected {
                     ui.add_space(8.0);
@@ -1474,34 +1446,6 @@ impl SmcApp {
                             .size(label)
                             .color(palette.dim),
                     );
-                    return;
-                }
-
-                if show_routing {
-                    if snapshot.routing.sources.is_empty() || snapshot.routing.targets.is_empty() {
-                        ui.add_space(8.0);
-                        ui.label(
-                            RichText::new("No routing devices are available.")
-                                .size(label)
-                                .color(palette.dim),
-                        );
-                        return;
-                    }
-                    let mut toggle = None;
-                    paint_routing_table(
-                        ui,
-                        inner.width(),
-                        inner.height(),
-                        map.scale,
-                        &snapshot.routing,
-                        palette,
-                        &mut toggle,
-                    );
-                    if let Some((source, target, enabled)) = toggle {
-                        let _ = commands.try_send(DaemonRequest::Pipewire(APICommand::SetRoute(
-                            source, target, enabled,
-                        )));
-                    }
                     return;
                 }
 
@@ -1619,8 +1563,41 @@ impl SmcApp {
             },
         );
 
+        ui.scope_builder(
+            UiBuilder::new()
+                .max_rect(bottom)
+                .layout(Layout::top_down(Align::LEFT)),
+            |ui| {
+                ui.spacing_mut().item_spacing = vec2(8.0, 6.0);
+                ui.label(RichText::new("Routing").size(label).color(palette.dim));
+                if !snapshot.connected {
+                    return;
+                }
+                if snapshot.routing.sources.is_empty() || snapshot.routing.targets.is_empty() {
+                    ui.label(
+                        RichText::new("No routing devices are available.")
+                            .size(label)
+                            .color(palette.dim),
+                    );
+                    return;
+                }
+                paint_routing_table(
+                    ui,
+                    map.scale,
+                    &snapshot.routing,
+                    palette,
+                    &mut routing_toggle,
+                );
+            },
+        );
+
+        let divider = Rect::from_min_size(
+            pos2(inner.left(), top.bottom() + gap * 0.5 - 0.5),
+            vec2(inner.width(), 1.0),
+        );
+        ui.painter().rect_filled(divider, 0.0, palette.border);
+
         self.pipeweaver_input = show_input;
-        self.pipeweaver_routing = show_routing;
 
         if let Some((process, name, route)) = route_command {
             let definition = AppDefinition {
@@ -1633,6 +1610,12 @@ impl SmcApp {
                 None => APICommand::ClearApplicationRoute(definition),
             };
             let _ = commands.try_send(DaemonRequest::Pipewire(command));
+        }
+
+        if let Some((source, target, enabled)) = routing_toggle {
+            let _ = commands.try_send(DaemonRequest::Pipewire(APICommand::SetRoute(
+                source, target, enabled,
+            )));
         }
     }
 
@@ -3649,15 +3632,44 @@ fn colour32((red, green, blue): (u8, u8, u8)) -> Color32 {
     Color32::from_rgb(red, green, blue)
 }
 
+fn pipeweaver_header(
+    ui: &mut egui::Ui,
+    heading: f32,
+    label: f32,
+    palette: &theme::Palette,
+    show_input: &mut bool,
+) {
+    ui.horizontal(|ui| {
+        ui.label(
+            RichText::new("Pipeweaver")
+                .font(FontId::proportional(heading))
+                .color(palette.text),
+        );
+        ui.add_space(18.0);
+        if ui
+            .selectable_label(!*show_input, RichText::new("Output").size(label))
+            .clicked()
+        {
+            *show_input = false;
+        }
+        if ui
+            .selectable_label(*show_input, RichText::new("Input").size(label))
+            .clicked()
+        {
+            *show_input = true;
+        }
+    });
+}
+
 fn paint_routing_table(
     ui: &mut egui::Ui,
-    content_width: f32,
-    content_height: f32,
     scale: f32,
     routing: &Routing,
     palette: &theme::Palette,
     toggle: &mut Option<(Ulid, Ulid, bool)>,
 ) {
+    let content_width = ui.available_width();
+    let content_height = ui.available_height();
     let label_width = (170.0 * scale).max(100.0);
     let columns = routing.sources.len().max(1) as f32;
     let rows = routing.targets.len().max(1) as f32;
