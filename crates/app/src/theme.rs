@@ -75,6 +75,10 @@ pub fn nav_config() -> Rect {
     Rect::from_min_max(pos2(1794.0, 181.0), pos2(1925.0, 229.0))
 }
 
+pub fn nav_pipeweaver() -> Rect {
+    Rect::from_min_max(pos2(1794.0, 251.0), pos2(1925.0, 299.0))
+}
+
 pub fn bezel_drag() -> Rect {
     Rect::from_min_max(pos2(20.0, 8.0), pos2(1745.0, 48.0))
 }
@@ -149,5 +153,27 @@ impl Map {
 
     pub fn radius(&self, radius: f32) -> CornerRadius {
         CornerRadius::same((radius * self.scale).round() as u8)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{nav_config, nav_mixer, nav_pipeweaver};
+
+    #[test]
+    fn the_nav_buttons_stack_without_overlapping() {
+        let mixer = nav_mixer();
+        let config = nav_config();
+        let pipeweaver = nav_pipeweaver();
+
+        assert_eq!(mixer.size(), config.size());
+        assert_eq!(config.size(), pipeweaver.size());
+
+        assert!(mixer.bottom() < config.top());
+        assert!(config.bottom() < pipeweaver.top());
+        assert_eq!(
+            config.top() - mixer.bottom(),
+            pipeweaver.top() - config.bottom()
+        );
     }
 }

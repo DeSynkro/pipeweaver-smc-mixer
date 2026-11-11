@@ -29,6 +29,7 @@ use ulid::Ulid;
 enum Screen {
     Mixer,
     Config,
+    Pipeweaver,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -898,7 +899,7 @@ impl SmcApp {
     }
 
     fn paint_transport(&mut self, ui: &mut egui::Ui, map: &Map) {
-        if self.screen == Screen::Config {
+        if self.screen != Screen::Mixer {
             if self.record_down {
                 self.record_down = false;
                 let _ = self.media_tx.send(MediaCommand::HexStop);
@@ -1232,16 +1233,17 @@ impl SmcApp {
         let entries = [
             (Screen::Mixer, theme::nav_mixer(), "MIXER"),
             (Screen::Config, theme::nav_config(), "CONFIG"),
+            (Screen::Pipeweaver, theme::nav_pipeweaver(), "PIPEWEAVER"),
         ];
         let palette = theme::palette(self.config.light_panel);
         for (screen, rect, label) in entries {
             let rect = map.rect(rect);
             let response = ui.interact(rect, Id::unique(("nav", label)), Sense::click());
             let active = self.screen == screen;
-            let on_config = self.screen == Screen::Config;
+            let on_panel = matches!(self.screen, Screen::Config | Screen::Pipeweaver);
             let painter = ui.painter();
             let shape = map.radius(18.5);
-            if on_config {
+            if on_panel {
                 painter.rect_filled(rect, shape, palette.card);
                 painter.rect_stroke(
                     rect,
@@ -1283,6 +1285,35 @@ impl SmcApp {
                 }
             }
         }
+    }
+
+    fn paint_pipeweaver(&self, ui: &egui::Ui, map: &Map) {
+        let palette = theme::palette(self.config.light_panel);
+        let panel = map.rect(theme::config_panel());
+        let painter = ui.painter();
+        painter.rect_filled(panel, map.radius(18.0), palette.panel);
+        painter.rect_stroke(
+            panel,
+            map.radius(18.0),
+            Stroke::new(1.5 * map.scale, palette.border),
+            StrokeKind::Inside,
+        );
+
+        let left = panel.left() + 28.0 * map.scale;
+        painter.text(
+            pos2(left, panel.top() + 28.0 * map.scale),
+            Align2::LEFT_TOP,
+            "Pipeweaver",
+            FontId::proportional((34.0 * map.scale).max(22.0)),
+            palette.text,
+        );
+        painter.text(
+            pos2(left, panel.top() + 74.0 * map.scale),
+            Align2::LEFT_TOP,
+            "Applications and routing will live here.",
+            FontId::proportional((16.0 * map.scale).max(12.0)),
+            palette.dim,
+        );
     }
 
     fn paint_config(&mut self, ui: &mut egui::Ui, map: &Map, ctx: &Context, monitor: Option<Rect>) {
@@ -2237,7 +2268,7 @@ impl SmcApp {
     }
 
     fn paint_drawer(&mut self, ui: &mut egui::Ui, snapshot: &Snapshot) {
-        if self.screen == Screen::Config {
+        if self.screen != Screen::Mixer {
             self.drawer_open = false;
             self.drawer_t = 0.0;
             return;
@@ -2641,8 +2672,10 @@ impl eframe::App for SmcApp {
                 self.paint_offline(ui, &map);
                 self.paint_transport(ui, &map);
                 self.paint_bezel(ui, &map, &ctx, monitor);
-                if self.screen == Screen::Config {
-                    self.paint_config(ui, &map, &ctx, monitor);
+                match self.screen {
+                    Screen::Config => self.paint_config(ui, &map, &ctx, monitor),
+                    Screen::Pipeweaver => self.paint_pipeweaver(ui, &map),
+                    Screen::Mixer => {}
                 }
                 self.paint_nav(ui, &map);
                 self.paint_drawer(ui, &snapshot);
