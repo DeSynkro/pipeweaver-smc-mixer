@@ -21,9 +21,9 @@ const PATH: &str = "/org/freedesktop/login1";
 const INTERFACE: &str = "org.freedesktop.login1.Manager";
 const WHO: &str = "Pipeweaver SMC Mixer";
 const WHY: &str = "Turn off the mixer LEDs";
-/// logind caps delay inhibitors at 5 seconds. Waiting well below that leaves
-/// room for logind to finish the sleep or shutdown afterwards.
-const BLACKOUT_TIMEOUT: Duration = Duration::from_secs(2);
+/// logind caps delay inhibitors at 5 seconds. The blackout itself is sent
+/// synchronously; this only waits briefly for the MIDI thread to confirm.
+const BLACKOUT_ACK_TIMEOUT: Duration = Duration::from_millis(300);
 
 /// A logind lifecycle signal the app cares about.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -189,6 +189,9 @@ async fn apply(
     if event.blacks_out() {
         blackout.hold();
 
+        // Send before any further D-Bus work: shutdown may kill us at any moment.
+        crate::midi::emergency_blackout();
+
         // Re-arm if a previous event left the lock released.
         if event == Event::Sleeping && sleep_lock.is_none() {
             *sleep_lock = inhibit(proxy, "sleep").await.ok();
@@ -198,10 +201,15 @@ async fn apply(
         }
 
         let generation = blackout.request();
-        if blackout.wait(generation, BLACKOUT_TIMEOUT).await {
+
+        if blackout.wait(generation, BLACKOUT_ACK_TIMEOUT).await {
             log::info!("Turned the mixer LEDs off before {event:?}");
         } else {
-            log::warn!("The mixer did not confirm the LED blackout before {event:?}");
+            // The first send may have raced an in-flight LED frame.
+            crate::midi::emergency_blackout();
+            log::info!(
+                "Sent the mixer LED blackout before {event:?} (MIDI thread did not confirm)"
+            );
         }
 
         if event == Event::Sleeping {

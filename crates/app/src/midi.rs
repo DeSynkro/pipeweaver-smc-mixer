@@ -257,6 +257,23 @@ fn open_output(config: &Config) -> Option<MidiOutputConnection> {
     None
 }
 
+/// Turn the surface off on a short-lived output connection.
+///
+/// The normal MIDI thread owns the main output, but during shutdown it may be
+/// blocked or already gone. ALSA allows a second output to the same mixer, so
+/// this does not depend on the control loop.
+pub(crate) fn emergency_blackout() {
+    let config = Config::load(&Config::path());
+    match open_output(&config) {
+        Some(mut output) => {
+            let mut leds = [u8::MAX; 32];
+            blackout(&mut output, &mut leds);
+            log::info!("Sent the mixer LED blackout on an emergency connection");
+        }
+        None => log::warn!("Could not open the mixer for an emergency LED blackout"),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn run_controls(
     config: Config,

@@ -144,6 +144,8 @@ async fn main() -> Result<()> {
                 } => {}
             }
             stop.store(true, Ordering::Relaxed);
+            // The session may kill the MIDI thread before it can black out.
+            midi::emergency_blackout();
             if let Some(ctx) = egui_ctx.lock().unwrap().as_ref() {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
