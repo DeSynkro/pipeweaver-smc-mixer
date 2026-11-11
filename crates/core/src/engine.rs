@@ -1,6 +1,6 @@
 use crate::config::{SURFACE_SOURCES_MAX, SURFACE_SOURCES_MIN};
 use pipeweaver_ipc::commands::DaemonStatus;
-use pipeweaver_shared::{Mix, MuteState, MuteTarget, OrderGroup};
+use pipeweaver_shared::{DeviceType, Mix, MuteState, MuteTarget, OrderGroup};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 use ulid::Ulid;
@@ -52,6 +52,7 @@ pub struct Snapshot {
     pub connected: bool,
     pub channels: Vec<Channel>,
     pub off_surface: Vec<Channel>,
+    pub applications: Applications,
 }
 
 impl Default for Snapshot {
@@ -60,8 +61,47 @@ impl Default for Snapshot {
             connected: false,
             channels: vec![Channel::default(); STRIP_COUNT],
             off_surface: Vec::new(),
+            applications: Applications::default(),
         }
     }
+}
+
+/// One PipeWire node behind an application entry.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AppNode {
+    pub node_id: u32,
+    pub title: Option<String>,
+}
+
+/// An application name as Pipeweaver groups it, with its current route.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AppEntry {
+    pub name: String,
+    pub route: Option<Ulid>,
+    pub nodes: Vec<AppNode>,
+}
+
+/// Applications grouped by the process that owns them.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AppGroup {
+    pub process: String,
+    pub apps: Vec<AppEntry>,
+}
+
+/// A device an application can be routed to.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RouteChoice {
+    pub id: Ulid,
+    pub name: String,
+}
+
+/// The application lists and route choices shown on the Pipeweaver screen.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Applications {
+    pub output: Vec<AppGroup>,
+    pub input: Vec<AppGroup>,
+    pub output_routes: Vec<RouteChoice>,
+    pub input_routes: Vec<RouteChoice>,
 }
 
 pub struct Engine {
@@ -186,7 +226,73 @@ fn build(status: &DaemonStatus, source_slots: usize) -> Snapshot {
         connected: true,
         channels,
         off_surface,
+        applications: build_applications(status),
     }
+}
+
+fn build_applications(status: &DaemonStatus) -> Applications {
+    Applications {
+        output: app_groups(status, DeviceType::Source),
+        input: app_groups(status, DeviceType::Target),
+        output_routes: status
+            .audio
+            .profile
+            .devices
+            .sources
+            .virtual_devices
+            .iter()
+            .map(|device| RouteChoice {
+                id: device.description.id,
+                name: device.description.name.clone(),
+            })
+            .collect(),
+        input_routes: status
+            .audio
+            .profile
+            .devices
+            .targets
+            .virtual_devices
+            .iter()
+            .map(|device| RouteChoice {
+                id: device.description.id,
+                name: device.description.name.clone(),
+            })
+            .collect(),
+    }
+}
+
+fn app_groups(status: &DaemonStatus, side: DeviceType) -> Vec<AppGroup> {
+    let mapping = &status.audio.profile.application_mapping[side];
+    let mut groups = Vec::new();
+
+    for (process, apps) in &status.audio.applications[side] {
+        let mut entries: Vec<AppEntry> = apps
+            .iter()
+            .map(|(name, nodes)| AppEntry {
+                name: name.clone(),
+                route: mapping
+                    .get(process)
+                    .and_then(|apps| apps.get(name))
+                    .copied()
+                    .or_else(|| nodes.first().and_then(|node| node.target_id)),
+                nodes: nodes
+                    .iter()
+                    .map(|node| AppNode {
+                        node_id: node.node_id,
+                        title: node.title.clone(),
+                    })
+                    .collect(),
+            })
+            .collect();
+        entries.sort_by(|a, b| a.name.cmp(&b.name));
+        groups.push(AppGroup {
+            process: process.clone(),
+            apps: entries,
+        });
+    }
+
+    groups.sort_by(|a, b| a.process.cmp(&b.process));
+    groups
 }
 
 fn source_channel(status: &DaemonStatus, id: Ulid) -> Option<Channel> {
@@ -368,5 +474,100 @@ mod tests {
         assert_eq!(engine.source_slots(), 4);
         engine.set_source_slots(9);
         assert_eq!(engine.source_slots(), 8);
+    }
+
+    #[test]
+    fn builds_the_application_list_and_its_routes() {
+        use pipeweaver_ipc::commands::Application;
+        use pipeweaver_shared::DeviceType;
+
+        let target = Ulid::new();
+        let source = Ulid::new();
+
+        let mut status = DaemonStatus::default();
+        status
+            .audio
+            .profile
+            .devices
+            .targets
+            .virtual_devices
+            .push(Default::default());
+        {
+            let device = &mut status.audio.profile.devices.targets.virtual_devices[0];
+            device.description.id = target;
+            device.description.name = "Personal".to_string();
+        }
+        status
+            .audio
+            .profile
+            .devices
+            .sources
+            .virtual_devices
+            .push(Default::default());
+        {
+            let device = &mut status.audio.profile.devices.sources.virtual_devices[0];
+            device.description.id = source;
+            device.description.name = "Browser".to_string();
+        }
+
+        status.audio.applications[DeviceType::Source]
+            .entry("firefox".to_string())
+            .or_default()
+            .insert(
+                "Firefox".to_string(),
+                vec![Application {
+                    node_id: 42,
+                    name: "Firefox".to_string(),
+                    volume: 100,
+                    muted: false,
+                    title: Some("Mozilla Firefox".to_string()),
+                    target: None,
+                    target_id: Some(target),
+                }],
+            );
+        status.audio.profile.application_mapping[DeviceType::Source]
+            .entry("firefox".to_string())
+            .or_default()
+            .insert("Firefox".to_string(), source);
+
+        status.audio.applications[DeviceType::Target]
+            .entry("obs".to_string())
+            .or_default()
+            .insert(
+                "OBS".to_string(),
+                vec![Application {
+                    node_id: 43,
+                    name: "OBS".to_string(),
+                    volume: 100,
+                    muted: false,
+                    title: None,
+                    target: None,
+                    target_id: Some(target),
+                }],
+            );
+        status.audio.profile.application_mapping[DeviceType::Target]
+            .entry("obs".to_string())
+            .or_default()
+            .insert("OBS".to_string(), target);
+
+        let engine = Engine::new(8);
+        engine.apply(status);
+        let snapshot = engine.snapshot();
+
+        assert_eq!(snapshot.applications.output_routes.len(), 1);
+        assert_eq!(snapshot.applications.output_routes[0].name, "Browser");
+        assert_eq!(snapshot.applications.output.len(), 1);
+        assert_eq!(snapshot.applications.output[0].process, "firefox");
+        assert_eq!(snapshot.applications.output[0].apps[0].name, "Firefox");
+        assert_eq!(snapshot.applications.output[0].apps[0].route, Some(source));
+        assert_eq!(
+            snapshot.applications.output[0].apps[0].nodes[0]
+                .title
+                .as_deref(),
+            Some("Mozilla Firefox")
+        );
+
+        assert_eq!(snapshot.applications.input_routes[0].name, "Personal");
+        assert_eq!(snapshot.applications.input[0].apps[0].route, Some(target));
     }
 }

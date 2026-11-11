@@ -11,7 +11,7 @@ use egui::{
     StrokeKind, UiBuilder, Vec2, ViewportCommand, pos2, vec2,
 };
 use pipeweaver_ipc::commands::{APICommand, DaemonRequest};
-use pipeweaver_shared::{Mix, MuteState, MuteTarget};
+use pipeweaver_shared::{AppDefinition, DeviceType, Mix, MuteState, MuteTarget};
 use pipeweaver_smc_core::config::{Config, MidiMode, autostart_path, set_autostart, state_dir};
 use pipeweaver_smc_core::{
     Channel, ChannelKind, Engine, STRIP_COUNT, SURFACE_SOURCES_DEFAULT, SURFACE_SOURCES_MAX,
@@ -90,6 +90,7 @@ pub struct SmcApp {
     config: Config,
     config_path: PathBuf,
     screen: Screen,
+    pipeweaver_input: bool,
     pipeweaver_online: bool,
     engine: Arc<Engine>,
     midi: Link,
@@ -172,6 +173,7 @@ impl SmcApp {
             config,
             config_path,
             screen: Screen::Mixer,
+            pipeweaver_input: false,
             pipeweaver_online: false,
             engine,
             midi: Link::Offline,
@@ -1284,33 +1286,198 @@ impl SmcApp {
         }
     }
 
-    fn paint_pipeweaver(&self, ui: &egui::Ui, map: &Map) {
+    fn paint_pipeweaver(&mut self, ui: &mut egui::Ui, map: &Map, snapshot: &Snapshot) {
         let palette = theme::palette(self.config.light_panel);
         let panel = map.rect(theme::config_panel());
-        let painter = ui.painter();
-        painter.rect_filled(panel, map.radius(18.0), palette.panel);
-        painter.rect_stroke(
-            panel,
-            map.radius(18.0),
-            Stroke::new(1.5 * map.scale, palette.border),
-            StrokeKind::Inside,
+        {
+            let painter = ui.painter();
+            painter.rect_filled(panel, map.radius(18.0), palette.panel);
+            painter.rect_stroke(
+                panel,
+                map.radius(18.0),
+                Stroke::new(1.5 * map.scale, palette.border),
+                StrokeKind::Inside,
+            );
+        }
+
+        let mut inner = panel.shrink(28.0 * map.scale);
+        // Leave the nav column clear so rows never sit under the buttons.
+        inner.max.x = map.rect(theme::nav_config()).left() - 24.0 * map.scale;
+        let heading = (34.0 * map.scale).max(22.0);
+        let label = (16.0 * map.scale).max(12.0);
+        let body = (15.0 * map.scale).max(11.0);
+
+        let mut show_input = self.pipeweaver_input;
+        let mut route_command = None;
+        let commands = self.commands.clone();
+
+        ui.scope_builder(
+            UiBuilder::new()
+                .max_rect(inner)
+                .layout(Layout::top_down(Align::LEFT)),
+            |ui| {
+                ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new("Pipeweaver")
+                            .font(FontId::proportional(heading))
+                            .color(palette.text),
+                    );
+                    ui.add_space(18.0);
+                    if ui
+                        .selectable_label(!show_input, RichText::new("Output").size(label))
+                        .clicked()
+                    {
+                        show_input = false;
+                    }
+                    if ui
+                        .selectable_label(show_input, RichText::new("Input").size(label))
+                        .clicked()
+                    {
+                        show_input = true;
+                    }
+                });
+
+                if !snapshot.connected {
+                    ui.add_space(8.0);
+                    ui.label(
+                        RichText::new("Pipeweaver is offline.")
+                            .size(label)
+                            .color(palette.dim),
+                    );
+                    return;
+                }
+
+                let (groups, routes) = if show_input {
+                    (
+                        &snapshot.applications.input,
+                        &snapshot.applications.input_routes,
+                    )
+                } else {
+                    (
+                        &snapshot.applications.output,
+                        &snapshot.applications.output_routes,
+                    )
+                };
+
+                if groups.is_empty() {
+                    ui.add_space(8.0);
+                    let message = if show_input {
+                        "No applications are recording audio."
+                    } else {
+                        "No applications are playing audio."
+                    };
+                    ui.label(RichText::new(message).size(label).color(palette.dim));
+                    return;
+                }
+
+                egui::ScrollArea::vertical()
+                    .id_salt("pipeweaver-apps")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        let row_height = ui.spacing().interact_size.y;
+                        let route_width = 220.0 * map.scale;
+                        for group in groups {
+                            ui.add_space(8.0);
+                            ui.label(
+                                RichText::new(group.process.as_str())
+                                    .size(label)
+                                    .color(palette.dim),
+                            );
+                            for app in &group.apps {
+                                ui.horizontal(|ui| {
+                                    ui.add_space(14.0 * map.scale);
+                                    let name_width =
+                                        (ui.available_width() - route_width - 14.0 * map.scale)
+                                            .max(80.0);
+                                    let mut name = app.name.clone();
+                                    if app.nodes.len() > 1 {
+                                        name.push_str(&format!(" ({} nodes)", app.nodes.len()));
+                                    }
+                                    ui.allocate_ui_with_layout(
+                                        vec2(name_width, row_height),
+                                        Layout::left_to_right(Align::Center),
+                                        |ui| {
+                                            ui.set_min_width(name_width);
+                                            ui.add(
+                                                egui::Label::new(
+                                                    RichText::new(name)
+                                                        .size(body)
+                                                        .color(palette.text),
+                                                )
+                                                .truncate(),
+                                            );
+                                        },
+                                    );
+
+                                    let selected = app.route;
+                                    let selected_name = selected
+                                        .and_then(|id| routes.iter().find(|route| route.id == id))
+                                        .map(|route| route.name.clone())
+                                        .unwrap_or_else(|| "Default".to_string());
+                                    egui::ComboBox::from_id_salt((
+                                        "app-route",
+                                        group.process.as_str(),
+                                        app.name.as_str(),
+                                    ))
+                                    .selected_text(RichText::new(selected_name).size(body))
+                                    .width(route_width)
+                                    .show_ui(ui, |ui| {
+                                        if ui
+                                            .selectable_label(
+                                                selected.is_none(),
+                                                RichText::new("Default").size(body),
+                                            )
+                                            .clicked()
+                                        {
+                                            route_command = Some((
+                                                group.process.clone(),
+                                                app.name.clone(),
+                                                None,
+                                            ));
+                                        }
+                                        for route in routes {
+                                            if ui
+                                                .selectable_label(
+                                                    selected == Some(route.id),
+                                                    RichText::new(route.name.as_str()).size(body),
+                                                )
+                                                .clicked()
+                                            {
+                                                route_command = Some((
+                                                    group.process.clone(),
+                                                    app.name.clone(),
+                                                    Some(route.id),
+                                                ));
+                                            }
+                                        }
+                                    });
+                                });
+                            }
+                        }
+                    });
+            },
         );
 
-        let left = panel.left() + 28.0 * map.scale;
-        painter.text(
-            pos2(left, panel.top() + 28.0 * map.scale),
-            Align2::LEFT_TOP,
-            "Pipeweaver",
-            FontId::proportional((34.0 * map.scale).max(22.0)),
-            palette.text,
-        );
-        painter.text(
-            pos2(left, panel.top() + 74.0 * map.scale),
-            Align2::LEFT_TOP,
-            "Applications and routing will live here.",
-            FontId::proportional((16.0 * map.scale).max(12.0)),
-            palette.dim,
-        );
+        self.pipeweaver_input = show_input;
+
+        if let Some((process, name, route)) = route_command {
+            let side = if show_input {
+                DeviceType::Target
+            } else {
+                DeviceType::Source
+            };
+            let definition = AppDefinition {
+                device_type: side,
+                process,
+                name,
+            };
+            let command = match route {
+                Some(id) => APICommand::SetApplicationRoute(definition, id),
+                None => APICommand::ClearApplicationRoute(definition),
+            };
+            let _ = commands.try_send(DaemonRequest::Pipewire(command));
+        }
     }
 
     fn paint_config(&mut self, ui: &mut egui::Ui, map: &Map, ctx: &Context, monitor: Option<Rect>) {
@@ -2671,7 +2838,7 @@ impl eframe::App for SmcApp {
                 self.paint_bezel(ui, &map, &ctx, monitor);
                 match self.screen {
                     Screen::Config => self.paint_config(ui, &map, &ctx, monitor),
-                    Screen::Pipeweaver => self.paint_pipeweaver(ui, &map),
+                    Screen::Pipeweaver => self.paint_pipeweaver(ui, &map, &snapshot),
                     Screen::Mixer => {}
                 }
                 self.paint_nav(ui, &map);
