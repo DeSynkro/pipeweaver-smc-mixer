@@ -14,10 +14,10 @@ use pipeweaver_ipc::commands::{APICommand, DaemonRequest};
 use pipeweaver_shared::{AppDefinition, DeviceType, Mix, MuteState, MuteTarget};
 use pipeweaver_smc_core::config::{Config, MidiMode, autostart_path, set_autostart, state_dir};
 use pipeweaver_smc_core::{
-    Channel, ChannelKind, Engine, STRIP_COUNT, SURFACE_SOURCES_DEFAULT, SURFACE_SOURCES_MAX,
-    SURFACE_SOURCES_MIN, Snapshot,
+    AppEntry, Channel, ChannelKind, Engine, STRIP_COUNT, SURFACE_SOURCES_DEFAULT,
+    SURFACE_SOURCES_MAX, SURFACE_SOURCES_MIN, Snapshot,
 };
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
@@ -30,6 +30,43 @@ enum Screen {
     Mixer,
     Config,
     Pipeweaver,
+}
+
+/// How long an application stays listed after its last node disappears.
+const APP_GRACE: Duration = Duration::from_secs(10);
+/// The countdown ring turns red for the last few seconds.
+const APP_CRITICAL: Duration = Duration::from_secs(3);
+
+type AppKey = (DeviceType, String, String);
+
+struct CachedApp {
+    process: String,
+    entry: AppEntry,
+    last_seen: Instant,
+    live: bool,
+}
+
+struct DisplayApp {
+    entry: AppEntry,
+    pending: Option<Duration>,
+}
+
+struct DisplayGroup {
+    process: String,
+    apps: Vec<DisplayApp>,
+}
+
+/// Drop applications that have been gone for longer than the grace period.
+/// An open popup pauses the countdown so the route can still be changed.
+fn expire_apps(cache: &mut HashMap<AppKey, CachedApp>, now: Instant, paused: bool) {
+    if paused {
+        for app in cache.values_mut() {
+            if !app.live {
+                app.last_seen = now;
+            }
+        }
+    }
+    cache.retain(|_, app| app.live || now.saturating_duration_since(app.last_seen) < APP_GRACE);
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -91,6 +128,7 @@ pub struct SmcApp {
     config_path: PathBuf,
     screen: Screen,
     pipeweaver_input: bool,
+    apps_cache: HashMap<AppKey, CachedApp>,
     pipeweaver_online: bool,
     engine: Arc<Engine>,
     midi: Link,
@@ -174,6 +212,7 @@ impl SmcApp {
             config_path,
             screen: Screen::Mixer,
             pipeweaver_input: false,
+            apps_cache: HashMap::new(),
             pipeweaver_online: false,
             engine,
             midi: Link::Offline,
@@ -1310,6 +1349,78 @@ impl SmcApp {
         let mut show_input = self.pipeweaver_input;
         let mut route_command = None;
         let commands = self.commands.clone();
+        let refresh = Instant::now();
+        let side = if show_input {
+            DeviceType::Target
+        } else {
+            DeviceType::Source
+        };
+
+        // Reconcile the live status with the cached list. An application that
+        // stops playing stays here for the grace period so its route can still
+        // be changed.
+        for app in self.apps_cache.values_mut() {
+            app.live = false;
+        }
+        for (app_side, live_groups) in [
+            (DeviceType::Source, &snapshot.applications.output),
+            (DeviceType::Target, &snapshot.applications.input),
+        ] {
+            for group in live_groups {
+                for app in &group.apps {
+                    let key = (app_side, group.process.clone(), app.name.clone());
+                    match self.apps_cache.get_mut(&key) {
+                        Some(cached) => {
+                            cached.process = group.process.clone();
+                            cached.entry = app.clone();
+                            cached.last_seen = refresh;
+                            cached.live = true;
+                        }
+                        None => {
+                            self.apps_cache.insert(
+                                key,
+                                CachedApp {
+                                    process: group.process.clone(),
+                                    entry: app.clone(),
+                                    last_seen: refresh,
+                                    live: true,
+                                },
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        expire_apps(&mut self.apps_cache, refresh, ui.ctx().any_popup_open());
+
+        let routes = if show_input {
+            &snapshot.applications.input_routes
+        } else {
+            &snapshot.applications.output_routes
+        };
+        let mut visible: BTreeMap<String, Vec<DisplayApp>> = BTreeMap::new();
+        for ((app_side, _, _), cached) in &self.apps_cache {
+            if *app_side != side {
+                continue;
+            }
+            let pending = (!cached.live).then(|| {
+                APP_GRACE.saturating_sub(refresh.saturating_duration_since(cached.last_seen))
+            });
+            visible
+                .entry(cached.process.clone())
+                .or_default()
+                .push(DisplayApp {
+                    entry: cached.entry.clone(),
+                    pending,
+                });
+        }
+        let groups: Vec<DisplayGroup> = visible
+            .into_iter()
+            .map(|(process, mut apps)| {
+                apps.sort_by(|a, b| a.entry.name.cmp(&b.entry.name));
+                DisplayGroup { process, apps }
+            })
+            .collect();
 
         ui.scope_builder(
             UiBuilder::new()
@@ -1348,18 +1459,6 @@ impl SmcApp {
                     return;
                 }
 
-                let (groups, routes) = if show_input {
-                    (
-                        &snapshot.applications.input,
-                        &snapshot.applications.input_routes,
-                    )
-                } else {
-                    (
-                        &snapshot.applications.output,
-                        &snapshot.applications.output_routes,
-                    )
-                };
-
                 if groups.is_empty() {
                     ui.add_space(8.0);
                     let message = if show_input {
@@ -1377,7 +1476,7 @@ impl SmcApp {
                     .show(ui, |ui| {
                         let row_height = ui.spacing().interact_size.y;
                         let route_width = 220.0 * map.scale;
-                        for group in groups {
+                        for group in &groups {
                             ui.add_space(8.0);
                             ui.label(
                                 RichText::new(group.process.as_str())
@@ -1385,14 +1484,13 @@ impl SmcApp {
                                     .color(palette.dim),
                             );
                             for app in &group.apps {
+                                let entry = &app.entry;
                                 ui.horizontal(|ui| {
                                     ui.add_space(14.0 * map.scale);
-                                    let name_width =
-                                        (ui.available_width() - route_width - 14.0 * map.scale)
-                                            .max(80.0);
-                                    let mut name = app.name.clone();
-                                    if app.nodes.len() > 1 {
-                                        name.push_str(&format!(" ({} nodes)", app.nodes.len()));
+                                    let name_width = (240.0 * map.scale).max(120.0);
+                                    let mut name = entry.name.clone();
+                                    if entry.nodes.len() > 1 {
+                                        name.push_str(&format!(" ({} nodes)", entry.nodes.len()));
                                     }
                                     ui.allocate_ui_with_layout(
                                         vec2(name_width, row_height),
@@ -1409,8 +1507,9 @@ impl SmcApp {
                                             );
                                         },
                                     );
+                                    ui.add_space(10.0 * map.scale);
 
-                                    let selected = app.route;
+                                    let selected = entry.route;
                                     let selected_name = selected
                                         .and_then(|id| routes.iter().find(|route| route.id == id))
                                         .map(|route| route.name.clone())
@@ -1418,7 +1517,7 @@ impl SmcApp {
                                     egui::ComboBox::from_id_salt((
                                         "app-route",
                                         group.process.as_str(),
-                                        app.name.as_str(),
+                                        entry.name.as_str(),
                                     ))
                                     .selected_text(RichText::new(selected_name).size(body))
                                     .width(route_width)
@@ -1432,7 +1531,7 @@ impl SmcApp {
                                         {
                                             route_command = Some((
                                                 group.process.clone(),
-                                                app.name.clone(),
+                                                entry.name.clone(),
                                                 None,
                                             ));
                                         }
@@ -1446,12 +1545,27 @@ impl SmcApp {
                                             {
                                                 route_command = Some((
                                                     group.process.clone(),
-                                                    app.name.clone(),
+                                                    entry.name.clone(),
                                                     Some(route.id),
                                                 ));
                                             }
                                         }
                                     });
+                                    // Keep the ring slot allocated on every row so
+                                    // the countdown appearing never shifts the row.
+                                    ui.add_space(8.0 * map.scale);
+                                    let ring = 18.0 * map.scale;
+                                    let (response, painter) =
+                                        ui.allocate_painter(vec2(ring, ring), Sense::hover());
+                                    if let Some(remaining) = app.pending {
+                                        draw_app_countdown(
+                                            &painter,
+                                            response.rect,
+                                            remaining,
+                                            palette,
+                                            map.scale,
+                                        );
+                                    }
                                 });
                             }
                         }
@@ -1462,11 +1576,6 @@ impl SmcApp {
         self.pipeweaver_input = show_input;
 
         if let Some((process, name, route)) = route_command {
-            let side = if show_input {
-                DeviceType::Target
-            } else {
-                DeviceType::Source
-            };
             let definition = AppDefinition {
                 device_type: side,
                 process,
@@ -3487,4 +3596,105 @@ fn draw_tab(
         ],
         Stroke::new(1.5, palette.accent),
     );
+}
+
+fn draw_app_countdown(
+    painter: &egui::Painter,
+    rect: Rect,
+    remaining: Duration,
+    palette: &theme::Palette,
+    scale: f32,
+) {
+    let center = rect.center();
+    let radius = rect.width().min(rect.height()) * 0.42;
+    painter.circle_stroke(
+        center,
+        radius,
+        Stroke::new((1.4 * scale).max(1.0), palette.border),
+    );
+
+    let fraction = (remaining.as_secs_f32() / APP_GRACE.as_secs_f32()).clamp(0.0, 1.0);
+    if fraction <= 0.0 {
+        return;
+    }
+    let color = if remaining <= APP_CRITICAL {
+        palette.red
+    } else {
+        palette.text
+    };
+    let start = -std::f32::consts::FRAC_PI_2;
+    let sweep = std::f32::consts::TAU * fraction;
+    let segments = ((32.0 * fraction).ceil() as usize).max(2);
+    let mut points = Vec::with_capacity(segments + 1);
+    for index in 0..=segments {
+        let angle = start + sweep * (index as f32 / segments as f32);
+        points.push(center + vec2(angle.cos(), angle.sin()) * radius);
+    }
+    painter.add(Shape::line(
+        points,
+        Stroke::new((2.0 * scale).max(1.0), color),
+    ));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{APP_GRACE, CachedApp, expire_apps};
+    use pipeweaver_shared::DeviceType;
+    use pipeweaver_smc_core::AppEntry;
+    use std::collections::HashMap;
+    use std::time::{Duration, Instant};
+
+    fn key() -> (DeviceType, String, String) {
+        (DeviceType::Source, "process".to_string(), "app".to_string())
+    }
+
+    fn cached(live: bool, last_seen: Instant) -> CachedApp {
+        CachedApp {
+            process: "process".to_string(),
+            entry: AppEntry::default(),
+            last_seen,
+            live,
+        }
+    }
+
+    #[test]
+    fn a_live_application_does_not_expire() {
+        let now = Instant::now();
+        let mut cache = HashMap::from([(key(), cached(true, now))]);
+
+        expire_apps(&mut cache, now + Duration::from_secs(60), false);
+
+        assert_eq!(cache.len(), 1);
+    }
+
+    #[test]
+    fn a_gone_application_lingers_for_ten_seconds() {
+        let now = Instant::now();
+        let mut cache = HashMap::from([(key(), cached(false, now))]);
+
+        expire_apps(&mut cache, now + Duration::from_secs(9), false);
+        assert_eq!(cache.len(), 1);
+
+        expire_apps(
+            &mut cache,
+            now + APP_GRACE + Duration::from_millis(1),
+            false,
+        );
+        assert!(cache.is_empty());
+    }
+
+    #[test]
+    fn an_open_popup_pauses_the_countdown() {
+        let now = Instant::now();
+        let mut cache = HashMap::from([(key(), cached(false, now))]);
+
+        expire_apps(&mut cache, now + Duration::from_secs(30), true);
+        assert_eq!(cache.len(), 1);
+
+        expire_apps(&mut cache, now + Duration::from_secs(39), false);
+        assert_eq!(cache.len(), 1);
+
+        expire_apps(&mut cache, now + Duration::from_secs(41), false);
+        assert!(cache.is_empty());
+    }
 }
