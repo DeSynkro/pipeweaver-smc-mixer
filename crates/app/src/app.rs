@@ -3,7 +3,7 @@ use crate::knob_mode::{
     REQUEST_ENABLE, REQUEST_RESTORE,
 };
 use crate::media::MediaCommand;
-use crate::midi::{AppPress, Link, due_long_press, is_long_press};
+use crate::midi::{AppPress, Link, StartupAnimation, due_long_press, is_long_press};
 use crate::theme::{self, Map};
 use eframe::egui;
 use egui::{
@@ -160,6 +160,7 @@ pub struct SmcApp {
     last_midi: Arc<AtomicU64>,
     led_test: Arc<AtomicBool>,
     startup_animation: Arc<AtomicBool>,
+    startup_animation_kind: Arc<AtomicU8>,
     animation_preview: Arc<AtomicBool>,
     record_down: bool,
     transport_app: AppPress,
@@ -203,6 +204,7 @@ impl SmcApp {
         last_midi: Arc<AtomicU64>,
         led_test: Arc<AtomicBool>,
         startup_animation: Arc<AtomicBool>,
+        startup_animation_kind: Arc<AtomicU8>,
         animation_preview: Arc<AtomicBool>,
         pipeweaver_request: Arc<AtomicBool>,
     ) -> Self {
@@ -247,6 +249,7 @@ impl SmcApp {
             last_midi,
             led_test,
             startup_animation,
+            startup_animation_kind,
             animation_preview,
             record_down: false,
             transport_app: AppPress::default(),
@@ -1686,6 +1689,7 @@ impl SmcApp {
         let mut linked_reverse_disabled = self.linked_reverse_disabled_net.load(Ordering::Relaxed);
         let mut start_minimized = self.config.start_minimized;
         let mut startup_animation = self.startup_animation.load(Ordering::Relaxed);
+        let mut startup_animation_name = self.config.startup_animation_name.clone();
         let autostart_present = autostart_path().exists();
         let mut start_on_login = autostart_present;
         let mut reset = false;
@@ -1815,10 +1819,31 @@ impl SmcApp {
                     );
                     columns[0].checkbox(&mut startup_animation, "Startup animation");
                     columns[0].label(
-                        RichText::new("Fills the LEDs once when the app starts.")
+                        RichText::new("Plays a short animation when the app starts.")
                             .size(label)
                             .color(palette.dim),
                     );
+                    columns[0].horizontal(|ui| {
+                        ui.label(
+                            RichText::new("Animation")
+                                .size(label)
+                                .color(palette.dim),
+                        );
+                        egui::ComboBox::from_id_salt("startup-animation")
+                            .selected_text(
+                                RichText::new(startup_animation_name.as_str()).size(label),
+                            )
+                            .width((150.0 * map.scale).max(110.0))
+                            .show_ui(ui, |ui| {
+                                for animation in StartupAnimation::ALL {
+                                    ui.selectable_value(
+                                        &mut startup_animation_name,
+                                        animation.label().to_string(),
+                                        animation.label(),
+                                    );
+                                }
+                            });
+                    });
 
                     columns[0].add_space(12.0);
                     columns[0].label(
@@ -2379,6 +2404,15 @@ impl SmcApp {
             self.startup_animation
                 .store(startup_animation, Ordering::Relaxed);
             self.config.startup_animation = startup_animation;
+            self.save_config();
+        }
+        if startup_animation_name != self.config.startup_animation_name {
+            self.config.startup_animation_name = startup_animation_name;
+            self.startup_animation_kind.store(
+                StartupAnimation::from_label(&self.config.startup_animation_name).code(),
+                Ordering::Relaxed,
+            );
+            self.animation_preview.store(true, Ordering::Relaxed);
             self.save_config();
         }
         if start_on_login != autostart_present

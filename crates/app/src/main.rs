@@ -259,6 +259,9 @@ async fn main() -> Result<()> {
     let last_midi = Arc::new(AtomicU64::new(0));
     let led_test = Arc::new(AtomicBool::new(false));
     let startup_animation = Arc::new(AtomicBool::new(initial.startup_animation));
+    let startup_animation_kind = Arc::new(AtomicU8::new(
+        midi::StartupAnimation::from_label(&initial.startup_animation_name).code(),
+    ));
     let animation_preview = Arc::new(AtomicBool::new(false));
     let ui_commands = command_tx.clone();
     let midi_handle = {
@@ -278,6 +281,7 @@ async fn main() -> Result<()> {
         let midi_last_midi = last_midi.clone();
         let midi_led_test = led_test.clone();
         let midi_startup_animation = startup_animation.clone();
+        let midi_startup_animation_kind = startup_animation_kind.clone();
         let midi_animation_preview = animation_preview.clone();
         let midi_stop = stop.clone();
         let midi_power_blackout = power_blackout.clone();
@@ -302,6 +306,7 @@ async fn main() -> Result<()> {
                 midi_stop,
                 midi_power_blackout,
                 midi_startup_animation,
+                midi_startup_animation_kind,
                 midi_animation_preview,
             )
         })
@@ -338,6 +343,7 @@ async fn main() -> Result<()> {
             let last_midi = last_midi.clone();
             let led_test = led_test.clone();
             let startup_animation = startup_animation.clone();
+            let startup_animation_kind = startup_animation_kind.clone();
             let animation_preview = animation_preview.clone();
             let pipeweaver_request = pipeweaver_request.clone();
 
@@ -376,6 +382,7 @@ async fn main() -> Result<()> {
                         last_midi,
                         led_test,
                         startup_animation,
+                        startup_animation_kind,
                         animation_preview,
                         pipeweaver_request,
                     )))

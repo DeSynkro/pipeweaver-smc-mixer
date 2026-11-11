@@ -61,6 +61,10 @@ fn default_startup_animation() -> bool {
     true
 }
 
+fn default_startup_animation_name() -> String {
+    String::from("Classic")
+}
+
 fn default_schema() -> u32 {
     1
 }
@@ -89,6 +93,8 @@ pub struct Config {
     pub linked_reverse_disabled: bool,
     #[serde(default = "default_startup_animation")]
     pub startup_animation: bool,
+    #[serde(default = "default_startup_animation_name")]
+    pub startup_animation_name: String,
     pub start_minimized: bool,
     pub window_width: f32,
     pub schema: u32,
@@ -110,6 +116,7 @@ impl Default for Config {
             linked_knob_disabled: false,
             linked_reverse_disabled: false,
             startup_animation: default_startup_animation(),
+            startup_animation_name: default_startup_animation_name(),
             start_minimized: false,
             window_width: default_width(),
             schema: default_schema(),
@@ -278,6 +285,12 @@ mod tests {
             "pipeweaver-smc-mixer-{label}-{}-{stamp}.json",
             std::process::id()
         ))
+    }
+
+    #[test]
+    fn configs_without_an_animation_name_use_classic() {
+        let config: Config = serde_json::from_str("{}").unwrap();
+        assert_eq!(config.startup_animation_name, "Classic");
     }
 
     #[test]

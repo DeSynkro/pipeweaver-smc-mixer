@@ -295,6 +295,7 @@ pub fn run_controls(
     stop: Arc<AtomicBool>,
     power_blackout: Blackout,
     startup_animation: Arc<AtomicBool>,
+    startup_animation_kind: Arc<AtomicU8>,
     animation_preview: Arc<AtomicBool>,
 ) {
     let config_path = Config::path();
@@ -487,7 +488,9 @@ pub fn run_controls(
                 }
                 if animation_active {
                     animation_elapsed += 50;
-                    if let Some(pattern) = startup_pattern(animation_elapsed) {
+                    let animation =
+                        StartupAnimation::from_code(startup_animation_kind.load(Ordering::Relaxed));
+                    if let Some(pattern) = startup_pattern(animation, animation_elapsed) {
                         if let Some(output) = output.as_mut() {
                             send_pattern(output, &pattern, &mut leds);
                         }
@@ -1019,7 +1022,109 @@ fn send_pattern(output: &mut MidiOutputConnection, desired: &[u8; 32], last: &mu
     }
 }
 
-fn startup_pattern(elapsed_ms: u64) -> Option<[u8; 32]> {
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum StartupAnimation {
+    #[default]
+    Classic,
+    Sweep,
+    Chase,
+    Wave,
+    Sparkle,
+    Pulse,
+    Ripple,
+    Rain,
+}
+
+impl StartupAnimation {
+    pub const ALL: [Self; 8] = [
+        Self::Classic,
+        Self::Sweep,
+        Self::Chase,
+        Self::Wave,
+        Self::Sparkle,
+        Self::Pulse,
+        Self::Ripple,
+        Self::Rain,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Classic => "Classic",
+            Self::Sweep => "Sweep",
+            Self::Chase => "Chase",
+            Self::Wave => "Wave",
+            Self::Sparkle => "Sparkle",
+            Self::Pulse => "Pulse",
+            Self::Ripple => "Ripple",
+            Self::Rain => "Rain",
+        }
+    }
+
+    pub fn code(self) -> u8 {
+        match self {
+            Self::Classic => 0,
+            Self::Sweep => 1,
+            Self::Chase => 2,
+            Self::Wave => 3,
+            Self::Sparkle => 4,
+            Self::Pulse => 5,
+            Self::Ripple => 6,
+            Self::Rain => 7,
+        }
+    }
+
+    pub fn from_code(code: u8) -> Self {
+        match code {
+            1 => Self::Sweep,
+            2 => Self::Chase,
+            3 => Self::Wave,
+            4 => Self::Sparkle,
+            5 => Self::Pulse,
+            6 => Self::Ripple,
+            7 => Self::Rain,
+            _ => Self::Classic,
+        }
+    }
+
+    pub fn from_label(label: &str) -> Self {
+        let label = label.trim();
+        Self::ALL
+            .into_iter()
+            .find(|animation| animation.label().eq_ignore_ascii_case(label))
+            .unwrap_or_default()
+    }
+
+    pub fn duration_ms(self) -> u64 {
+        match self {
+            Self::Classic => 1000,
+            Self::Sweep => 1200,
+            Self::Chase => 1600,
+            Self::Wave => 1400,
+            Self::Sparkle => 1500,
+            Self::Pulse => 1200,
+            Self::Ripple => 1200,
+            Self::Rain => 1600,
+        }
+    }
+}
+
+fn startup_pattern(animation: StartupAnimation, elapsed_ms: u64) -> Option<[u8; 32]> {
+    if elapsed_ms >= animation.duration_ms() {
+        return None;
+    }
+    Some(match animation {
+        StartupAnimation::Classic => classic_pattern(elapsed_ms),
+        StartupAnimation::Sweep => sweep_pattern(elapsed_ms),
+        StartupAnimation::Chase => chase_pattern(elapsed_ms),
+        StartupAnimation::Wave => wave_pattern(elapsed_ms),
+        StartupAnimation::Sparkle => sparkle_pattern(elapsed_ms),
+        StartupAnimation::Pulse => pulse_pattern(elapsed_ms),
+        StartupAnimation::Ripple => ripple_pattern(elapsed_ms),
+        StartupAnimation::Rain => rain_pattern(elapsed_ms),
+    })
+}
+
+fn classic_pattern(elapsed_ms: u64) -> [u8; 32] {
     let mut pattern = [LED_OFF; 32];
     const COLUMN_MS: u64 = 100;
     const COLUMNS: u64 = 8;
@@ -1032,24 +1137,114 @@ fn startup_pattern(elapsed_ms: u64) -> Option<[u8; 32]> {
                 pattern[row + column] = LED_ON;
             }
         }
-        return Some(pattern);
+        return pattern;
     }
 
     match elapsed_ms - fill {
         0..=149 => pattern.fill(LED_ON),
         150..=249 => {}
         250..=399 => pattern.fill(LED_ON),
-        400..=499 => {}
-        _ => return None,
+        _ => {}
     }
-    Some(pattern)
+    pattern
+}
+
+fn sweep_pattern(elapsed_ms: u64) -> [u8; 32] {
+    let mut pattern = [LED_OFF; 32];
+    let position = (elapsed_ms / 60) as i64 - 2;
+    for row in [0, 8, 16, 24] {
+        for column in 0..8 {
+            if (column as i64 - position).abs() <= 1 {
+                pattern[row + column] = LED_ON;
+            }
+        }
+    }
+    pattern
+}
+
+fn chase_pattern(elapsed_ms: u64) -> [u8; 32] {
+    // Sweep each row in turn: Square -> R -> S -> M.
+    const ORDER: [usize; 32] = [
+        24, 25, 26, 27, 28, 29, 30, 31, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+        17, 18, 19, 20, 21, 22, 23,
+    ];
+    let mut pattern = [LED_OFF; 32];
+    let head = (elapsed_ms / 50) as usize % 32;
+    for offset in 0..4 {
+        pattern[ORDER[(head + 32 - offset) % 32]] = LED_ON;
+    }
+    pattern
+}
+
+fn wave_pattern(elapsed_ms: u64) -> [u8; 32] {
+    let mut pattern = [LED_OFF; 32];
+    let phase = (elapsed_ms / 80) as i64;
+    for column in 0..8 {
+        let row = (column as i64 + phase).rem_euclid(4) as usize;
+        pattern[row * 8 + column] = LED_ON;
+    }
+    pattern
+}
+
+fn sparkle_pattern(elapsed_ms: u64) -> [u8; 32] {
+    let mut pattern = [LED_OFF; 32];
+    let frame = elapsed_ms / 100;
+    let mut state = (frame as u32)
+        .wrapping_mul(1_664_525)
+        .wrapping_add(1_013_904_223);
+    for _ in 0..8 {
+        state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        pattern[(state >> 16) as usize % 32] = LED_ON;
+    }
+    pattern
+}
+
+fn pulse_pattern(elapsed_ms: u64) -> [u8; 32] {
+    let phase = (elapsed_ms / 100) % 4;
+    if matches!(phase, 0 | 1) {
+        [LED_ON; 32]
+    } else {
+        [LED_OFF; 32]
+    }
+}
+
+fn ripple_pattern(elapsed_ms: u64) -> [u8; 32] {
+    let mut pattern = [LED_OFF; 32];
+    let step = ((elapsed_ms / 120) % 5) as i32;
+    for row in 0..4 {
+        for column in 0..8 {
+            let distance = (row as i32 * 2 - 3).abs() / 2 + (column as i32 * 2 - 7).abs() / 2;
+            if distance == step {
+                pattern[row * 8 + column] = LED_ON;
+            }
+        }
+    }
+    pattern
+}
+
+fn rain_pattern(elapsed_ms: u64) -> [u8; 32] {
+    let mut pattern = [LED_OFF; 32];
+    let step = elapsed_ms / 70;
+    for column in 0..8u64 {
+        let phase = step.wrapping_add(column.wrapping_mul(5));
+        if phase % 3 != 0 {
+            continue;
+        }
+        let row = (phase.wrapping_mul(7) % 4) as usize;
+        pattern[row * 8 + column as usize] = LED_ON;
+        if row > 0 {
+            pattern[(row - 1) * 8 + column as usize] = LED_ON;
+        }
+    }
+    pattern
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        AppPress, KnobBank, LED_OFF, LED_ON, PickupState, blackout_frames, choose_index,
-        device_key, due_long_press, is_long_press, led_pattern, output_candidates, relative_delta,
+        AppPress, KnobBank, LED_OFF, LED_ON, PickupState, StartupAnimation, blackout_frames,
+        choose_index, device_key, due_long_press, is_long_press, led_pattern, output_candidates,
+        relative_delta, startup_pattern,
     };
     use pipeweaver_smc_core::config::MidiMode;
     use pipeweaver_smc_core::engine::Snapshot;
@@ -1058,6 +1253,59 @@ mod tests {
 
     fn names(list: &[&str]) -> Vec<String> {
         list.iter().map(|name| name.to_string()).collect()
+    }
+
+    #[test]
+    fn chase_sweeps_square_then_r_then_s_then_m() {
+        let frame = |elapsed| startup_pattern(StartupAnimation::Chase, elapsed).unwrap();
+
+        // One row every 8 steps of 50 ms.
+        assert_eq!(frame(0)[24], LED_ON);
+        assert_eq!(frame(400)[0], LED_ON);
+        assert_eq!(frame(800)[8], LED_ON);
+        assert_eq!(frame(1200)[16], LED_ON);
+    }
+
+    #[test]
+    fn startup_animations_end_after_their_duration() {
+        for animation in StartupAnimation::ALL {
+            assert!(
+                startup_pattern(animation, 0).is_some(),
+                "{} should start",
+                animation.label()
+            );
+            assert!(
+                startup_pattern(animation, animation.duration_ms() - 1).is_some(),
+                "{} should still be running",
+                animation.label()
+            );
+            assert!(
+                startup_pattern(animation, animation.duration_ms()).is_none(),
+                "{} should end",
+                animation.label()
+            );
+            for elapsed in (0..animation.duration_ms()).step_by(50) {
+                let pattern = startup_pattern(animation, elapsed).unwrap();
+                assert!(
+                    pattern
+                        .iter()
+                        .all(|value| *value == LED_ON || *value == LED_OFF),
+                    "{} uses an unknown level at {elapsed}ms",
+                    animation.label()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn startup_animation_labels_round_trip() {
+        for animation in StartupAnimation::ALL {
+            assert_eq!(StartupAnimation::from_label(animation.label()), animation);
+        }
+        assert_eq!(
+            StartupAnimation::from_label("nonsense"),
+            StartupAnimation::Classic
+        );
     }
 
     #[test]
