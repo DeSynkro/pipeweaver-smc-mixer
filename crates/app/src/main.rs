@@ -55,6 +55,7 @@ async fn main() -> Result<()> {
 
     let stop = Arc::new(AtomicBool::new(false));
     let power_blackout = power::Blackout::new();
+    let pipeweaver_request = Arc::new(AtomicBool::new(false));
     let ui_on = Arc::new(AtomicBool::new(true));
     let focus = Arc::new(AtomicBool::new(false));
     let minimized = Arc::new(AtomicBool::new(false));
@@ -180,6 +181,7 @@ async fn main() -> Result<()> {
         mic_muted.clone(),
         minimized.clone(),
         tray_context.egui.clone(),
+        pipeweaver_request.clone(),
     ));
     let (command_tx, mut command_rx) = tokio::sync::mpsc::channel(1024);
     {
@@ -265,15 +267,11 @@ async fn main() -> Result<()> {
         let pickup = pickup.clone();
         let midi_knob_mode = knob_mode.clone();
         let midi_media = media_tx.clone();
-        let midi_ui_on = ui_on.clone();
-        let midi_focus = focus.clone();
         let midi_record_hex = record_hex.clone();
         let midi_hex_latch = hex_latch.clone();
         let midi_hex_active = hex_active.clone();
         let midi_linked_knob_disabled = linked_knob_disabled.clone();
         let midi_linked_reverse_disabled = linked_reverse_disabled.clone();
-        let midi_minimized = minimized.clone();
-        let midi_egui = tray_context.egui.clone();
         let midi_link = midi_link.clone();
         let midi_last_midi = last_midi.clone();
         let midi_led_test = led_test.clone();
@@ -291,15 +289,11 @@ async fn main() -> Result<()> {
                 midi_knob_mode,
                 midi_ui_reset,
                 midi_media,
-                midi_ui_on,
-                midi_focus,
                 midi_record_hex,
                 midi_hex_latch,
                 midi_hex_active,
                 midi_linked_knob_disabled,
                 midi_linked_reverse_disabled,
-                midi_minimized,
-                midi_egui,
                 midi_link,
                 midi_last_midi,
                 midi_led_test,
@@ -343,6 +337,7 @@ async fn main() -> Result<()> {
             let led_test = led_test.clone();
             let startup_animation = startup_animation.clone();
             let animation_preview = animation_preview.clone();
+            let pipeweaver_request = pipeweaver_request.clone();
 
             eframe::run_native(
                 theme::APP_NAME,
@@ -380,6 +375,7 @@ async fn main() -> Result<()> {
                         led_test,
                         startup_animation,
                         animation_preview,
+                        pipeweaver_request,
                     )))
                 }),
             )?;

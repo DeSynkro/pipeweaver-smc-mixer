@@ -129,6 +129,7 @@ pub struct SmcApp {
     screen: Screen,
     pipeweaver_input: bool,
     apps_cache: HashMap<AppKey, CachedApp>,
+    pipeweaver_request: Arc<AtomicBool>,
     pipeweaver_online: bool,
     engine: Arc<Engine>,
     midi: Link,
@@ -202,6 +203,7 @@ impl SmcApp {
         led_test: Arc<AtomicBool>,
         startup_animation: Arc<AtomicBool>,
         animation_preview: Arc<AtomicBool>,
+        pipeweaver_request: Arc<AtomicBool>,
     ) -> Self {
         let window_width = config.window_width();
         Self {
@@ -213,6 +215,7 @@ impl SmcApp {
             screen: Screen::Mixer,
             pipeweaver_input: false,
             apps_cache: HashMap::new(),
+            pipeweaver_request,
             pipeweaver_online: false,
             engine,
             midi: Link::Offline,
@@ -1357,6 +1360,7 @@ impl SmcApp {
         let mut show_input = self.pipeweaver_input;
         let mut route_command = None;
         let mut routing_toggle = None;
+        let mut open_pipeweaver = false;
         let commands = self.commands.clone();
         let refresh = Instant::now();
         let side = if show_input {
@@ -1437,7 +1441,14 @@ impl SmcApp {
                 .layout(Layout::top_down(Align::LEFT)),
             |ui| {
                 ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
-                pipeweaver_header(ui, heading, label, palette, &mut show_input);
+                pipeweaver_header(
+                    ui,
+                    heading,
+                    label,
+                    palette,
+                    &mut show_input,
+                    &mut open_pipeweaver,
+                );
 
                 if !snapshot.connected {
                     ui.add_space(8.0);
@@ -1598,6 +1609,10 @@ impl SmcApp {
         ui.painter().rect_filled(divider, 0.0, palette.border);
 
         self.pipeweaver_input = show_input;
+
+        if open_pipeweaver {
+            let _ = self.media_tx.send(MediaCommand::OpenPipeweaver);
+        }
 
         if let Some((process, name, route)) = route_command {
             let definition = AppDefinition {
@@ -2868,6 +2883,9 @@ impl eframe::App for SmcApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        if self.pipeweaver_request.swap(false, Ordering::Relaxed) {
+            self.screen = Screen::Pipeweaver;
+        }
         let monitor = monitor_rect(frame);
         let snapshot = self.engine.snapshot();
         self.pipeweaver_online = snapshot.connected;
@@ -3638,6 +3656,7 @@ fn pipeweaver_header(
     label: f32,
     palette: &theme::Palette,
     show_input: &mut bool,
+    open_pipeweaver: &mut bool,
 ) {
     ui.horizontal(|ui| {
         ui.label(
@@ -3658,6 +3677,18 @@ fn pipeweaver_header(
         {
             *show_input = true;
         }
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if ui
+                .link(
+                    RichText::new("Open Pipeweaver ↗")
+                        .size(label)
+                        .color(palette.accent),
+                )
+                .clicked()
+            {
+                *open_pipeweaver = true;
+            }
+        });
     });
 }
 

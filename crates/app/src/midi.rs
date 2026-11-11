@@ -1,7 +1,6 @@
 use crate::knob_mode::{self, KnobMode, MODE_RELATIVE, REQUEST_NONE};
 use crate::media::MediaCommand;
 use crate::power::Blackout;
-use egui::ViewportCommand;
 use midir::{
     MidiInput, MidiInputConnection, MidiInputPort, MidiOutput, MidiOutputConnection, MidiOutputPort,
 };
@@ -17,6 +16,32 @@ use ulid::Ulid;
 
 const LED_ON: u8 = 127;
 const LED_OFF: u8 = 0;
+
+/// The app button opens the Pipeweaver screen when held this long.
+const APP_LONG_PRESS: Duration = Duration::from_secs(1);
+
+fn is_long_press(elapsed: Duration) -> bool {
+    elapsed >= APP_LONG_PRESS
+}
+
+#[derive(Default)]
+struct AppPress {
+    started: Option<Instant>,
+    fired: bool,
+}
+
+/// Whether a held app button has just reached the long-press threshold.
+/// The flag makes sure the action fires once, not on every loop tick.
+fn due_long_press(press: &mut AppPress, now: Instant) -> bool {
+    let Some(started) = press.started else {
+        return false;
+    };
+    if press.fired || !is_long_press(now.saturating_duration_since(started)) {
+        return false;
+    }
+    press.fired = true;
+    true
+}
 
 /// ALSA appends a volatile `client:port` suffix, for example
 /// `SINCO:SINCO SMC-Mixer-Private 40:0`. Compare only the stable part.
@@ -242,15 +267,11 @@ pub fn run_controls(
     knob_mode: Arc<KnobMode>,
     ui_reset: Arc<AtomicU8>,
     media: UnboundedSender<MediaCommand>,
-    ui_on: Arc<AtomicBool>,
-    focus: Arc<AtomicBool>,
     record_hex: Arc<AtomicBool>,
     hex_latch: Arc<AtomicBool>,
     hex_active: Arc<AtomicBool>,
     linked_knob_disabled: Arc<AtomicBool>,
     linked_reverse_disabled: Arc<AtomicBool>,
-    minimized: Arc<AtomicBool>,
-    egui: Arc<Mutex<Option<egui::Context>>>,
     midi_link: Arc<AtomicU8>,
     last_midi: Arc<AtomicU64>,
     led_test: Arc<AtomicBool>,
@@ -277,19 +298,17 @@ pub fn run_controls(
         let callback_knob_mode = knob_mode.clone();
         let callback_ui_reset = ui_reset.clone();
         let callback_media = media.clone();
-        let callback_ui_on = ui_on.clone();
-        let callback_focus = focus.clone();
         let callback_record_hex = record_hex.clone();
         let callback_hex_latch = hex_latch.clone();
         let callback_hex_active = hex_active.clone();
         let callback_linked_knob_disabled = linked_knob_disabled.clone();
         let callback_linked_reverse_disabled = linked_reverse_disabled.clone();
-        let callback_minimized = minimized.clone();
-        let callback_egui = egui.clone();
         let callback_last_midi = last_midi.clone();
         let mut axis_state = AxisState::default();
         let mut pickup_was = false;
         let mut pressed = [false; 128];
+        let app_press = Arc::new(Mutex::new(AppPress::default()));
+        let callback_app_press = app_press.clone();
         let mut hex_mode_was = record_hex.load(Ordering::Relaxed);
         let mut hex_latch_was = hex_latch.load(Ordering::Relaxed);
 
@@ -355,13 +374,10 @@ pub fn run_controls(
                         down,
                         &callback_media,
                         &callback_engine,
-                        &callback_ui_on,
-                        &callback_focus,
                         &callback_record_hex,
                         &callback_hex_latch,
                         &callback_hex_active,
-                        &callback_minimized,
-                        &callback_egui,
+                        &callback_app_press,
                     );
                 }
                 64..=95 => {
@@ -425,6 +441,13 @@ pub fn run_controls(
                     power_blackout.complete(generation);
                 }
                 return;
+            }
+            let long_press = {
+                let mut press = app_press.lock().unwrap();
+                due_long_press(&mut press, Instant::now())
+            };
+            if long_press {
+                let _ = media.send(MediaCommand::ShowPipeweaver);
             }
             // A sleep or shutdown is in progress: send the dark frame, confirm
             // it, and leave the surface dark until the power watcher releases
@@ -517,14 +540,31 @@ fn handle_transport(
     down: bool,
     media: &UnboundedSender<MediaCommand>,
     engine: &Arc<Engine>,
-    ui_on: &Arc<AtomicBool>,
-    focus: &Arc<AtomicBool>,
     record_hex: &Arc<AtomicBool>,
     hex_latch: &Arc<AtomicBool>,
     hex_active: &Arc<AtomicBool>,
-    minimized: &Arc<AtomicBool>,
-    egui: &Arc<Mutex<Option<egui::Context>>>,
+    app_press: &Arc<Mutex<AppPress>>,
 ) {
+    if control == 61 {
+        let mut press = app_press.lock().unwrap();
+        if down {
+            press.started = Some(Instant::now());
+            press.fired = false;
+        } else if let Some(started) = press.started.take() {
+            let fired = press.fired;
+            press.fired = false;
+            drop(press);
+            if !fired {
+                if is_long_press(started.elapsed()) {
+                    let _ = media.send(MediaCommand::ShowPipeweaver);
+                } else {
+                    let _ = media.send(MediaCommand::ToggleApp);
+                }
+            }
+        }
+        return;
+    }
+
     let hex = record_hex.load(Ordering::Relaxed);
     let latch = hex_latch.load(Ordering::Relaxed);
     if !down {
@@ -571,24 +611,6 @@ fn handle_transport(
         }
         59 => engine.set_source_slots(engine.source_slots().saturating_sub(1)),
         60 => engine.set_source_slots(engine.source_slots() + 1),
-        61 => {
-            if minimized.swap(false, Ordering::Relaxed) {
-                if let Some(ctx) = egui.lock().unwrap().as_ref() {
-                    ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
-                    ctx.send_viewport_cmd(ViewportCommand::Focus);
-                }
-                ui_on.store(true, Ordering::Relaxed);
-                focus.store(true, Ordering::Relaxed);
-            } else {
-                let was_on = ui_on.fetch_xor(true, Ordering::Relaxed);
-                if !was_on {
-                    focus.store(true, Ordering::Relaxed);
-                }
-            }
-        }
-        62 => {
-            let _ = media.send(MediaCommand::OpenPipeweaver);
-        }
         _ => {}
     }
 }
@@ -1009,15 +1031,38 @@ fn startup_pattern(elapsed_ms: u64) -> Option<[u8; 32]> {
 #[cfg(test)]
 mod tests {
     use super::{
-        KnobBank, LED_OFF, LED_ON, PickupState, blackout_frames, choose_index, device_key,
-        led_pattern, output_candidates, relative_delta,
+        AppPress, KnobBank, LED_OFF, LED_ON, PickupState, blackout_frames, choose_index,
+        device_key, due_long_press, is_long_press, led_pattern, output_candidates, relative_delta,
     };
     use pipeweaver_smc_core::config::MidiMode;
     use pipeweaver_smc_core::engine::Snapshot;
+    use std::time::{Duration, Instant};
     use ulid::Ulid;
 
     fn names(list: &[&str]) -> Vec<String> {
         list.iter().map(|name| name.to_string()).collect()
+    }
+
+    #[test]
+    fn the_long_press_fires_at_one_second_while_held() {
+        let now = Instant::now();
+        let mut press = AppPress {
+            started: Some(now),
+            fired: false,
+        };
+
+        assert!(!due_long_press(
+            &mut press,
+            now + Duration::from_millis(999)
+        ));
+        assert!(due_long_press(&mut press, now + Duration::from_secs(1)));
+        assert!(!due_long_press(&mut press, now + Duration::from_secs(2)));
+    }
+
+    #[test]
+    fn a_full_second_counts_as_a_long_press() {
+        assert!(!is_long_press(Duration::from_millis(999)));
+        assert!(is_long_press(Duration::from_secs(1)));
     }
 
     #[test]

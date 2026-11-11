@@ -62,6 +62,7 @@ pub enum MediaCommand {
     SeekForward,
     OpenPipeweaver,
     ToggleApp,
+    ShowPipeweaver,
     HexStart,
     HexStop,
     ToggleMicMute,
@@ -74,6 +75,7 @@ pub async fn run(
     mic_muted: Arc<AtomicBool>,
     minimized: Arc<AtomicBool>,
     egui: Arc<Mutex<Option<egui::Context>>>,
+    pipeweaver_request: Arc<AtomicBool>,
 ) {
     if let Some(state) = query_mic_mute().await {
         mic_muted.store(state, Ordering::Relaxed);
@@ -97,6 +99,11 @@ pub async fn run(
                 }
                 Ok(())
             }
+            MediaCommand::ShowPipeweaver => {
+                pipeweaver_request.store(true, Ordering::Relaxed);
+                show_app(&ui_on, &focus, &minimized, &egui);
+                Ok(())
+            }
             MediaCommand::HexStart => hex_dictation("start").await,
             MediaCommand::HexStop => hex_dictation("stop").await,
             MediaCommand::ToggleMicMute => toggle_mic_mute(&mic_muted).await,
@@ -110,6 +117,21 @@ pub async fn run(
         if let Err(error) = result {
             log::warn!("Media command failed: {error:#}");
         }
+    }
+}
+
+fn show_app(
+    ui_on: &Arc<AtomicBool>,
+    focus: &Arc<AtomicBool>,
+    minimized: &Arc<AtomicBool>,
+    egui: &Arc<Mutex<Option<egui::Context>>>,
+) {
+    minimized.store(false, Ordering::Relaxed);
+    ui_on.store(true, Ordering::Relaxed);
+    focus.store(true, Ordering::Relaxed);
+    if let Some(ctx) = egui.lock().unwrap().as_ref() {
+        ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
+        ctx.send_viewport_cmd(ViewportCommand::Focus);
     }
 }
 
@@ -244,7 +266,9 @@ async fn send_media(command: MediaCommand) -> Result<()> {
         MediaCommand::Next => proxy.call_method("Next", &()).await,
         MediaCommand::SeekBack => proxy.call_method("Seek", &(-5_000_000i64)).await,
         MediaCommand::SeekForward => proxy.call_method("Seek", &(5_000_000i64)).await,
-        MediaCommand::OpenPipeweaver | MediaCommand::ToggleApp => unreachable!(),
+        MediaCommand::OpenPipeweaver | MediaCommand::ToggleApp | MediaCommand::ShowPipeweaver => {
+            unreachable!()
+        }
         MediaCommand::HexStart | MediaCommand::HexStop => unreachable!(),
         MediaCommand::ToggleMicMute => unreachable!(),
     };
