@@ -1240,18 +1240,15 @@ impl SmcApp {
             let rect = map.rect(rect);
             let response = ui.interact(rect, Id::unique(("nav", label)), Sense::click());
             let active = self.screen == screen;
-            let on_panel = matches!(self.screen, Screen::Config | Screen::Pipeweaver);
             let painter = ui.painter();
             let shape = map.radius(18.5);
-            if on_panel {
-                painter.rect_filled(rect, shape, palette.card);
-                painter.rect_stroke(
-                    rect,
-                    shape,
-                    Stroke::new((1.2 * map.scale).max(1.0), palette.border),
-                    StrokeKind::Inside,
-                );
-            }
+            painter.rect_filled(rect, shape, palette.card);
+            painter.rect_stroke(
+                rect,
+                shape,
+                Stroke::new((1.2 * map.scale).max(1.0), palette.border),
+                StrokeKind::Inside,
+            );
             if response.hovered() && !active {
                 painter.rect_filled(
                     rect.shrink(3.0 * map.scale),
