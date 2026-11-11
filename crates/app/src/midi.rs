@@ -20,19 +20,19 @@ const LED_OFF: u8 = 0;
 /// The app button opens the Pipeweaver screen when held this long.
 const APP_LONG_PRESS: Duration = Duration::from_secs(1);
 
-fn is_long_press(elapsed: Duration) -> bool {
+pub(crate) fn is_long_press(elapsed: Duration) -> bool {
     elapsed >= APP_LONG_PRESS
 }
 
 #[derive(Default)]
-struct AppPress {
-    started: Option<Instant>,
-    fired: bool,
+pub(crate) struct AppPress {
+    pub(crate) started: Option<Instant>,
+    pub(crate) fired: bool,
 }
 
 /// Whether a held app button has just reached the long-press threshold.
 /// The flag makes sure the action fires once, not on every loop tick.
-fn due_long_press(press: &mut AppPress, now: Instant) -> bool {
+pub(crate) fn due_long_press(press: &mut AppPress, now: Instant) -> bool {
     let Some(started) = press.started else {
         return false;
     };

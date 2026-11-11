@@ -3,7 +3,7 @@ use crate::knob_mode::{
     REQUEST_ENABLE, REQUEST_RESTORE,
 };
 use crate::media::MediaCommand;
-use crate::midi::Link;
+use crate::midi::{AppPress, Link, due_long_press, is_long_press};
 use crate::theme::{self, Map};
 use eframe::egui;
 use egui::{
@@ -162,6 +162,7 @@ pub struct SmcApp {
     startup_animation: Arc<AtomicBool>,
     animation_preview: Arc<AtomicBool>,
     record_down: bool,
+    transport_app: AppPress,
     window_width: f32,
     restore_width: f32,
     restore_pos: Option<egui::Pos2>,
@@ -248,6 +249,7 @@ impl SmcApp {
             startup_animation,
             animation_preview,
             record_down: false,
+            transport_app: AppPress::default(),
             window_width,
             restore_width: window_width,
             restore_pos: None,
@@ -1016,8 +1018,8 @@ impl SmcApp {
                 6 => "Next track",
                 7 => "Give targets another strip",
                 8 => "Give sources another strip",
-                9 => "Show or hide this app",
-                _ => "Open Pipeweaver",
+                9 => "Show or hide this app. Hold to open Pipeweaver",
+                _ => "Unbound",
             };
             let response = response.on_hover_text(tooltip);
             match index {
@@ -1094,15 +1096,35 @@ impl SmcApp {
                     }
                 }
                 9 => {
-                    if response.clicked() {
-                        let _ = self.media_tx.send(MediaCommand::ToggleApp);
+                    // Track the global button state rather than only the
+                    // widget's hitbox: the window can resize under the pointer
+                    // during a hold, which used to look like a release.
+                    let pointer_down = ui.input(|input| input.pointer.primary_down());
+                    if response.is_pointer_button_down_on() && self.transport_app.started.is_none()
+                    {
+                        self.transport_app.started = Some(Instant::now());
+                        self.transport_app.fired = false;
+                    }
+                    if let Some(started) = self.transport_app.started {
+                        if pointer_down {
+                            if due_long_press(&mut self.transport_app, Instant::now()) {
+                                let _ = self.media_tx.send(MediaCommand::ShowPipeweaver);
+                            }
+                        } else {
+                            self.transport_app.started = None;
+                            let fired = self.transport_app.fired;
+                            self.transport_app.fired = false;
+                            if !fired {
+                                if is_long_press(started.elapsed()) {
+                                    let _ = self.media_tx.send(MediaCommand::ShowPipeweaver);
+                                } else {
+                                    let _ = self.media_tx.send(MediaCommand::ToggleApp);
+                                }
+                            }
+                        }
                     }
                 }
-                _ => {
-                    if response.clicked() {
-                        let _ = self.media_tx.send(MediaCommand::OpenPipeweaver);
-                    }
-                }
+                _ => {}
             }
         }
     }
